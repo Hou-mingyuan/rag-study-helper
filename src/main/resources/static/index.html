@@ -1,0 +1,1655 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RAG 智能问答</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+/* ========== Reset & Base ========== */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  transition: background 0.25s ease, color 0.25s ease;
+}
+
+/* ========== Theme: Light (default) ========== */
+:root {
+  --bg-app: #f0f2f5;
+  --bg-sidebar: #ffffff;
+  --bg-main: #ffffff;
+  --bg-surface: #f7f8fa;
+  --bg-hover: #f0f1f3;
+  --bg-active: #e8edf5;
+  --bg-bubble-user: linear-gradient(135deg, #2563eb, #1d4ed8);
+  --bg-bubble-assistant: #f7f8fa;
+  --bg-input: #ffffff;
+  --bg-code: #1e1e2e;
+  --border: #e5e7eb;
+  --border-light: #f0f1f3;
+  --text-primary: #1f2937;
+  --text-secondary: #6b7280;
+  --text-muted: #9ca3af;
+  --text-on-accent: #ffffff;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-light: rgba(37,99,235,0.08);
+  --danger: #ef4444;
+  --danger-light: rgba(239,68,68,0.08);
+  --success: #16a34a;
+  --success-light: rgba(22,163,74,0.08);
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.06);
+  --shadow-lg: 0 8px 32px rgba(0,0,0,0.1);
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --sidebar-w: 300px;
+  --header-h: 56px;
+  --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ========== Theme: Dark ========== */
+.light-theme {
+  --bg-app: #0f0f13;
+  --bg-sidebar: #16161d;
+  --bg-main: #131317;
+  --bg-surface: #1c1c24;
+  --bg-hover: #252530;
+  --bg-active: #1e2440;
+  --bg-bubble-user: linear-gradient(135deg, #3b82f6, #2563eb);
+  --bg-bubble-assistant: #1c1c24;
+  --bg-input: #1c1c24;
+  --bg-code: #0d0d14;
+  --border: rgba(255,255,255,0.08);
+  --border-light: rgba(255,255,255,0.04);
+  --text-primary: #e4e4e7;
+  --text-secondary: #8b8b9e;
+  --text-muted: #555566;
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+  --accent-light: rgba(59,130,246,0.12);
+  --danger: #ef4444;
+  --danger-light: rgba(239,68,68,0.12);
+  --success: #22c55e;
+  --success-light: rgba(34,197,94,0.12);
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.2);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.3);
+  --shadow-lg: 0 8px 32px rgba(0,0,0,0.4);
+}
+
+body { background: var(--bg-app); color: var(--text-primary); }
+
+/* ========== Layout ========== */
+.app { display: flex; height: 100vh; }
+
+/* ========== Sidebar ========== */
+.sidebar {
+  width: var(--sidebar-w);
+  min-width: var(--sidebar-w);
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  z-index: 50;
+  position: relative;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.sidebar-header {
+  padding: 16px 16px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: var(--text-primary);
+}
+.sidebar-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, var(--accent), #8b5cf6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.sidebar-logo svg { width: 18px; height: 18px; fill: white; }
+.sidebar-brand span {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+.new-chat-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition);
+  flex-shrink: 0;
+}
+.new-chat-btn:hover { background: var(--accent-light); color: var(--accent); border-color: var(--accent); }
+.new-chat-btn svg { width: 16px; height: 16px; }
+
+/* Search */
+.sidebar-search {
+  padding: 8px 16px 4px;
+  flex-shrink: 0;
+}
+.sidebar-search input {
+  width: 100%;
+  padding: 8px 12px 8px 34px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  transition: border-color var(--transition);
+}
+.sidebar-search input:focus { border-color: var(--accent); }
+.sidebar-search input::placeholder { color: var(--text-muted); }
+.search-icon {
+  position: absolute;
+  left: 28px;
+  margin-top: 9px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+.search-icon svg { width: 14px; height: 14px; fill: currentColor; }
+
+/* Conversation List */
+.conversation-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+.conversation-list::-webkit-scrollbar { width: 4px; }
+.conversation-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.conv-item {
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  margin-bottom: 2px;
+  transition: background var(--transition);
+  position: relative;
+  gap: 10px;
+}
+.conv-item:hover { background: var(--bg-hover); }
+.conv-item.active { background: var(--accent-light); }
+.conv-item .conv-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.conv-item.active .conv-avatar { background: var(--accent); color: white; }
+.conv-item .conv-avatar svg { width: 14px; height: 14px; }
+.conv-item .conv-info { flex: 1; min-width: 0; }
+.conv-item .conv-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.conv-item .conv-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+.conv-item .conv-delete {
+  opacity: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition);
+  flex-shrink: 0;
+}
+.conv-item:hover .conv-delete { opacity: 1; }
+.conv-item .conv-delete:hover { color: var(--danger); background: var(--danger-light); }
+.conv-item .conv-delete svg { width: 14px; height: 14px; }
+
+/* Sidebar Footer */
+.sidebar-footer {
+  padding: 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.sidebar-footer-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  transition: all var(--transition);
+  width: 100%;
+  text-align: left;
+}
+.sidebar-footer-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.sidebar-footer-btn svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.sidebar-footer-btn:hover svg { color: var(--text-secondary); }
+
+/* ========== Main Content ========== */
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* Chat Header */
+.chat-header {
+  height: var(--header-h);
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-main);
+  flex-shrink: 0;
+}
+.chat-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.sidebar-toggle, .sidebar-back {
+  display: none;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--transition);
+  flex-shrink: 0;
+}
+.sidebar-toggle:hover, .sidebar-back:hover { background: var(--bg-hover); }
+.sidebar-toggle svg, .sidebar-back svg { width: 18px; height: 18px; }
+.chat-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-header-actions { display: flex; gap: 4px; }
+.chat-header-actions button {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition);
+}
+.chat-header-actions button:hover { background: var(--bg-hover); color: var(--text-secondary); }
+.chat-header-actions button svg { width: 16px; height: 16px; }
+
+/* Messages */
+.messages-container {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.messages-container::-webkit-scrollbar { width: 6px; }
+.messages-container::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.messages {
+  max-width: 740px;
+  margin: 0 auto;
+  padding: 32px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* Empty State */
+.empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  text-align: center;
+  min-height: 400px;
+}
+.empty-state .empty-icon {
+  width: 72px;
+  height: 72px;
+  border-radius: var(--radius-xl);
+  background: linear-gradient(135deg, var(--accent), #8b5cf6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 24px;
+  box-shadow: 0 8px 32px rgba(37,99,235,0.2);
+}
+.empty-state .empty-icon svg { width: 32px; height: 32px; fill: white; }
+.empty-state h3 {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+.empty-state p {
+  font-size: 14px;
+  color: var(--text-muted);
+  max-width: 360px;
+  line-height: 1.6;
+}
+
+/* Message Bubbles */
+.message-wrapper {
+  display: flex;
+  gap: 12px;
+  animation: msg-fade-in 0.25s ease;
+  position: relative;
+}
+@keyframes msg-fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.message-wrapper.user {
+  justify-content: flex-end;
+}
+.message-wrapper.user .message-avatar { order: 1; }
+.message-wrapper.user + .message-wrapper.user,
+.message-wrapper.assistant + .message-wrapper.assistant {
+  margin-top: -8px;
+}
+
+.message-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.message-avatar.user {
+  background: var(--accent);
+  color: white;
+}
+.message-avatar.assistant {
+  background: linear-gradient(135deg, var(--accent), #8b5cf6);
+  color: white;
+}
+.message-avatar svg { width: 16px; height: 16px; fill: currentColor; }
+
+.message-body { max-width: calc(100% - 44px); min-width: 0; }
+.message {
+  padding: 10px 16px;
+  border-radius: var(--radius-lg);
+  font-size: 15px;
+  line-height: 1.65;
+  word-wrap: break-word;
+  position: relative;
+}
+.message.user {
+  background: var(--bg-bubble-user);
+  color: white;
+  border-bottom-right-radius: 4px;
+}
+.message.assistant {
+  background: var(--bg-bubble-assistant);
+  color: var(--text-primary);
+  border: 1px solid var(--border-light);
+  border-bottom-left-radius: 4px;
+}
+.message.error {
+  background: var(--danger-light);
+  color: var(--danger);
+  border: 1px solid rgba(239,68,68,0.15);
+  border-bottom-left-radius: 4px;
+}
+.message.timestamp {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 4px 0;
+  background: none;
+  border: none;
+  text-align: center;
+}
+
+/* Copy button — below the message bubble, visible on hover */
+.message-footer {
+  display: flex;
+  padding-top: 4px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.message-wrapper.assistant .message-footer { justify-content: flex-start; }
+.message-wrapper.user .message-footer { justify-content: flex-end; }
+.message-wrapper:hover .message-footer { opacity: 1; }
+.copy-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-main);
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-sm);
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.copy-btn:hover { color: var(--text-primary); border-color: var(--text-muted); }
+.copy-btn.copied { color: var(--success); border-color: var(--success); background: var(--success-light); }
+.copy-btn svg { width: 13px; height: 13px; }
+
+/* Message content styling */
+.message p { margin: 0 0 8px; }
+.message p:last-child { margin-bottom: 0; }
+.message ul, .message ol { padding-left: 20px; margin: 6px 0; }
+.message blockquote {
+  border-left: 3px solid var(--accent);
+  padding-left: 12px;
+  margin: 8px 0;
+  color: var(--text-secondary);
+}
+.message table {
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 14px;
+  width: 100%;
+}
+.message th, .message td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+.message th { background: var(--bg-surface); font-weight: 600; }
+.message h1, .message h2, .message h3 { margin: 12px 0 6px; font-weight: 600; }
+.message h1 { font-size: 18px; }
+.message h2 { font-size: 16px; }
+.message h3 { font-size: 15px; }
+
+.message code {
+  background: var(--bg-code);
+  color: #f0c674;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+}
+.message pre {
+  background: var(--bg-code);
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  margin: 10px 0;
+  border: 1px solid var(--border);
+}
+.message pre code { background: none; padding: 0; font-size: 13px; color: inherit; }
+.message a { color: var(--accent); text-decoration: none; }
+.message a:hover { text-decoration: underline; }
+
+/* Cursor blink */
+.cursor-blink {
+  display: inline-block;
+  width: 2px;
+  height: 14px;
+  background: var(--accent);
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: blink 0.8s step-end infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+/* ========== Input Area ========== */
+.input-area {
+  padding: 16px 24px 24px;
+  background: var(--bg-main);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.input-wrapper {
+  max-width: 740px;
+  margin: 0 auto;
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 8px 8px 8px 16px;
+  transition: border-color var(--transition), box-shadow var(--transition);
+  box-shadow: var(--shadow-sm);
+}
+.input-wrapper:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-light);
+}
+.input-wrapper textarea {
+  flex: 1;
+  border: none;
+  background: transparent;
+  padding: 6px 4px;
+  font-size: 15px;
+  outline: none;
+  resize: none;
+  font-family: inherit;
+  line-height: 1.5;
+  max-height: 160px;
+  color: var(--text-primary);
+}
+.input-wrapper textarea::placeholder { color: var(--text-muted); }
+.input-wrapper textarea::-webkit-scrollbar { width: 4px; }
+.input-wrapper textarea::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.send-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  border: none;
+  background: var(--accent);
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition);
+  flex-shrink: 0;
+}
+.send-btn:hover { background: var(--accent-hover); }
+.send-btn:disabled { opacity: 0.4; cursor: not-allowed; background: var(--accent); }
+.send-btn svg { width: 16px; height: 16px; }
+.send-btn.stop {
+  background: var(--danger);
+}
+.send-btn.stop:hover {
+  background: #b91c1c;
+}
+
+/* ========== Knowledge Base Panel ========== */
+.kb-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.35);
+  z-index: 100;
+  animation: overlay-in 0.2s ease;
+}
+@keyframes overlay-in { from { opacity: 0; } to { opacity: 1; } }
+.kb-overlay.open { display: block; }
+
+.kb-panel {
+  position: fixed;
+  top: 0;
+  right: -420px;
+  width: 420px;
+  max-width: 92vw;
+  height: 100vh;
+  background: var(--bg-sidebar);
+  border-left: 1px solid var(--border);
+  z-index: 110;
+  display: flex;
+  flex-direction: column;
+  transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: -4px 0 24px rgba(0,0,0,0.08);
+}
+.kb-panel.open { right: 0; }
+
+.kb-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.kb-header h2 { font-size: 16px; font-weight: 700; }
+.kb-close {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition);
+}
+.kb-close:hover { background: var(--bg-hover); color: var(--text-primary); }
+.kb-close svg { width: 18px; height: 18px; }
+
+.kb-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+.kb-body::-webkit-scrollbar { width: 4px; }
+.kb-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.kb-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.upload-area {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius-md);
+  padding: 32px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: all var(--transition);
+  margin-bottom: 24px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.upload-area:hover { border-color: var(--accent); background: var(--accent-light); }
+.upload-area.dragover { border-color: var(--accent); background: var(--accent-light); }
+.upload-icon { margin-bottom: 10px; }
+.upload-icon svg { width: 32px; height: 32px; color: var(--text-muted); }
+.upload-area input[type="file"] { display: none; }
+
+.doc-list { list-style: none; }
+.doc-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+  font-size: 13px;
+  transition: background var(--transition);
+}
+.doc-item:hover { background: var(--bg-hover); }
+.doc-item .doc-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.doc-item .doc-icon svg { width: 14px; height: 14px; }
+.doc-item .doc-info { flex: 1; min-width: 0; }
+.doc-item .doc-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--text-primary); }
+.doc-item .doc-meta { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+.doc-item .doc-check { color: var(--success); flex-shrink: 0; }
+.doc-delete-btn {
+  width: 28px; height: 28px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.doc-item:hover .doc-delete-btn { opacity: 1; }
+.doc-delete-btn:hover { color: var(--danger); background: var(--danger-light); }
+.doc-delete-btn svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.doc-empty {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 24px 0;
+  font-size: 13px;
+}
+.doc-error { color: var(--danger); font-size: 12px; margin-top: 8px; display: none; }
+.doc-error.visible { display: block; }
+
+.scan-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 12px;
+  padding: 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 13px;
+  transition: all var(--transition);
+}
+.scan-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.scan-btn svg { width: 14px; height: 14px; }
+
+/* ========== Toast ========== */
+.toast-container {
+  position: fixed;
+  bottom: 96px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+.toast {
+  padding: 12px 20px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.08);
+  animation: toast-up 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+  max-width: 440px;
+  color: white;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  line-height: 1.4;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+.toast.success { background: #059669; }
+.toast.error { background: #dc2626; }
+.toast.info { background: #2563eb; }
+@keyframes toast-up {
+  from { opacity: 0; transform: translateY(16px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ========== Modal ========== */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 300;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  animation: modal-overlay-in 0.2s ease;
+}
+.modal-overlay.open {
+  display: flex;
+}
+@keyframes modal-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.modal-dialog {
+  background: var(--bg-main);
+  border-radius: 16px;
+  padding: 32px 28px 24px;
+  width: 360px;
+  max-width: 88vw;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.2);
+  animation: modal-pop 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+  text-align: center;
+}
+@keyframes modal-pop {
+  from { opacity: 0; transform: scale(0.92) translateY(12px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.modal-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--danger-light);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 16px;
+}
+.modal-icon svg {
+  width: 24px;
+  height: 24px;
+  color: var(--danger);
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.modal-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+.modal-message {
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: 24px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+}
+.modal-actions button {
+  flex: 1;
+  height: 40px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border: none;
+}
+.modal-btn-cancel {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+}
+.modal-btn-cancel:hover {
+  background: var(--bg-hover);
+}
+.modal-btn-danger {
+  background: #dc2626;
+  color: white;
+}
+.modal-btn-danger:hover {
+  background: #b91c1c;
+}
+
+/* ========== Responsive ========== */
+@media (max-width: 768px) {
+  .sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    height: 100%;
+    transform: translateX(-100%);
+    box-shadow: var(--shadow-lg);
+  }
+  .sidebar.open { transform: translateX(0); }
+  .sidebar-toggle { display: flex !important; }
+  .sidebar-back { display: flex !important; }
+  .message-wrapper { gap: 8px; }
+  .message { font-size: 14px; padding: 8px 14px; }
+  .messages { padding: 20px 16px; gap: 20px; }
+  .input-area { padding: 12px 16px 20px; }
+  .kb-panel { width: 100%; max-width: 100%; }
+}
+
+/* ========== SVG Icons ========== */
+.icon { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- ======== Sidebar ======== -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <button class="sidebar-back" onclick="closeSidebarMobile()">
+        <svg viewBox="0 0 24 24" class="icon"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+      </button>
+      <a class="sidebar-brand" href="#">
+        <div class="sidebar-logo">
+          <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 15l-5-5 1.41-1.41L11 14.17l7.59-7.59L20 8l-9 9z"/></svg>
+        </div>
+        <span>RAG Chat</span>
+      </a>
+      <button class="new-chat-btn" onclick="newConversation()" title="新对话">
+        <svg viewBox="0 0 24 24" class="icon"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      </button>
+    </div>
+
+    <div class="sidebar-search" style="position:relative;">
+      <span class="search-icon">
+        <svg viewBox="0 0 24 24" class="icon"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      </span>
+      <input type="text" id="convSearch" placeholder="搜索对话..." oninput="filterConversations(this.value)">
+    </div>
+
+    <div class="conversation-list" id="convList"></div>
+
+    <div class="sidebar-footer">
+      <button class="sidebar-footer-btn" onclick="openKnowledgeBase()">
+        <svg viewBox="0 0 24 24" class="icon"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        知识库
+      </button>
+      <button class="sidebar-footer-btn" onclick="toggleTheme()" id="themeToggle">
+        <svg viewBox="0 0 24 24" class="icon" id="themeIcon"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+        <span id="themeLabel">切换主题</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ======== Main ======== -->
+  <main class="main-content" onclick="closeSidebarMobile(event)">
+    <header class="chat-header">
+      <div class="chat-header-left">
+        <button class="sidebar-toggle" onclick="document.getElementById('sidebar').classList.toggle('open')">
+          <svg viewBox="0 0 24 24" class="icon"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+        <span class="chat-title" id="chatTitle">新对话</span>
+      </div>
+      <div class="chat-header-actions"></div>
+    </header>
+
+    <div class="messages-container" id="messagesContainer">
+      <div class="messages" id="messages"></div>
+      <div class="empty-state" id="emptyState">
+        <div class="empty-icon">
+          <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 15l-5-5 1.41-1.41L11 14.17l7.59-7.59L20 8l-9 9z"/></svg>
+        </div>
+        <h3>开始新对话</h3>
+        <p>上传文档后，输入问题即可开始与知识库对话</p>
+      </div>
+    </div>
+
+    <div class="input-area">
+      <div class="input-wrapper">
+        <textarea id="questionInput" rows="1" placeholder="输入您的问题..." onkeydown="onInputKeydown(event)"></textarea>
+        <button class="send-btn" id="sendBtn" onclick="toggleSend()">
+          <svg viewBox="0 0 24 24" class="icon" id="sendIcon"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- ======== Knowledge Base Overlay ======== -->
+<div class="kb-overlay" id="kbOverlay" onclick="closeKnowledgeBase()"></div>
+
+<!-- ======== Knowledge Base Panel ======== -->
+<div class="kb-panel" id="kbPanel">
+  <div class="kb-header">
+    <h2>知识库</h2>
+    <button class="kb-close" onclick="closeKnowledgeBase()">
+      <svg viewBox="0 0 24 24" class="icon"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  </div>
+  <div class="kb-body">
+    <div class="kb-section-title">上传文档</div>
+    <div class="upload-area" id="kbUploadArea" onclick="document.getElementById('kbFileInput').click()">
+      <div class="upload-icon">
+        <svg viewBox="0 0 24 24" class="icon"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      </div>
+      <div style="margin-bottom:4px;">点击选择文件或拖拽到此处</div>
+      <div style="font-size:11px;color:var(--text-muted);">支持 PDF、TXT、MD、CSV、JSON、XML、Excel、Word、PPT、HTML</div>
+      <input type="file" id="kbFileInput" accept=".pdf,.txt,.md,.csv,.json,.xml,.xlsx,.xls,.docx,.pptx,.html,.htm" onchange="onFileSelected(event)">
+    </div>
+    <div class="doc-error" id="kbUploadError"></div>
+
+    <div class="kb-section-title" style="margin-top:20px;">已入库文档</div>
+    <ul class="doc-list" id="kbDocList">
+      <li class="doc-empty">暂无文档</li>
+    </ul>
+    <button class="scan-btn" onclick="scanDocuments()">
+      <svg viewBox="0 0 24 24" class="icon"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      扫描目录
+    </button>
+  </div>
+</div>
+
+<!-- ======== Toast ======== -->
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- ======== Modal ======== -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal-dialog">
+    <div class="modal-icon">
+      <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+    </div>
+    <div class="modal-title" id="modalTitle">确认删除</div>
+    <div class="modal-message" id="modalMessage">确定删除此对话？删除后不可恢复。</div>
+    <div class="modal-actions">
+      <button class="modal-btn-cancel" id="modalCancelBtn">取消</button>
+      <button class="modal-btn-danger" id="modalConfirmBtn">删除</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ========== SVG Icons ========== */
+var ICONS = {
+  user: '<svg viewBox="0 0 24 24" class="icon"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
+  assistant: '<svg viewBox="0 0 24 24" class="icon"><path d="M12 2a10 10 0 0 1 10 10c0 5-4 9-10 9S2 17 2 12 6 2 12 2z"/><path d="M8 12l2 2 4-4"/></svg>',
+  copy: '<svg viewBox="0 0 24 24" class="icon"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+  check: '<svg viewBox="0 0 24 24" class="icon"><polyline points="20 6 9 17 4 12"/></svg>'
+};
+
+function makeCopyBtn(text) {
+  var btn = document.createElement('button');
+  btn.className = 'copy-btn';
+  btn.innerHTML = ICONS.copy;
+  btn.setAttribute('data-text', text);
+  btn.onclick = function(e) {
+    e.stopPropagation();
+    doCopy(text, btn);
+  };
+  return btn;
+}
+
+function doCopy(text, btn) {
+  (navigator.clipboard ? navigator.clipboard.writeText(text) : new Promise(function(resolve,reject) {
+    var ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); resolve(); } catch(e) { reject(e); }
+    document.body.removeChild(ta);
+  })).then(function() {
+    btn.innerHTML = ICONS.check;
+    btn.classList.add('copied');
+    setTimeout(function() {
+      btn.innerHTML = ICONS.copy;
+      btn.classList.remove('copied');
+    }, 2000);
+  }).catch(function() {});
+}
+
+/* ========== Session Manager ========== */
+var STORAGE_KEY = 'rag_sessions';
+
+function loadSessions() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; } catch(e) { return []; }
+}
+function saveSessions(s) {
+  while (s.length > 50) s.pop();
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+}
+
+function findSession(id) {
+  return loadSessions().find(function(s) { return s.id === id; });
+}
+
+var currentSessionId = null;
+
+function generateId() {
+  return 's-' + Date.now().toString(36) + Math.random().toString(36).substr(2, 6);
+}
+
+function createSession() {
+  var id = generateId();
+  var sessions = loadSessions();
+  sessions.unshift({ id: id, title: '新对话', timestamp: new Date().toISOString(), messages: [] });
+  saveSessions(sessions);
+  return id;
+}
+
+/* ========== Modal ========== */
+var pendingConfirmCallback = null;
+
+function showConfirmDialog(title, message, onConfirm) {
+  document.getElementById('modalTitle').textContent = title;
+  document.getElementById('modalMessage').textContent = message;
+  pendingConfirmCallback = onConfirm;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('modalOverlay').classList.remove('open');
+  pendingConfirmCallback = null;
+}
+
+function confirmAction() {
+  var cb = pendingConfirmCallback;
+  closeModal();
+  if (cb) cb();
+}
+
+document.getElementById('modalConfirmBtn').addEventListener('click', confirmAction);
+document.getElementById('modalCancelBtn').addEventListener('click', closeModal);
+document.getElementById('modalOverlay').addEventListener('click', function(e) {
+  if (e.target === this) closeModal();
+});
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape' && document.getElementById('modalOverlay').classList.contains('open')) closeModal();
+});
+
+function deleteSession(id, e) {
+  e.stopPropagation();
+  showConfirmDialog('确认删除', '确定删除此对话？删除后不可恢复。', function() {
+    var sessions = loadSessions().filter(function(s) { return s.id !== id; });
+    saveSessions(sessions);
+    if (currentSessionId === id) {
+      if (sessions.length > 0) switchConversation(sessions[0].id);
+      else { currentSessionId = createSession(); renderAll(); }
+    }
+    renderAll();
+    toast('对话已删除', 'success');
+  });
+}
+
+function saveMessage(sessionId, role, content) {
+  var sessions = loadSessions();
+  for (var i = 0; i < sessions.length; i++) {
+    if (sessions[i].id === sessionId) {
+      sessions[i].messages.push({ role: role, content: content });
+      sessions[i].preview = content.replace(/<[^>]*>/g, '').substring(0, 50);
+      break;
+    }
+  }
+  saveSessions(sessions);
+}
+
+function updateSessionTitle(sessionId, title) {
+  var sessions = loadSessions();
+  for (var i = 0; i < sessions.length; i++) {
+    if (sessions[i].id === sessionId) {
+      if (sessions[i].title === '新对话') sessions[i].title = title.substring(0, 30);
+      sessions[i].timestamp = new Date().toISOString();
+      break;
+    }
+  }
+  saveSessions(sessions);
+}
+
+/* ========== Conversation UI ========== */
+function filterConversations(q) {
+  renderConversations(q);
+}
+
+function renderConversations(filter) {
+  filter = filter || '';
+  var list = document.getElementById('convList');
+  var sessions = loadSessions();
+  if (filter) {
+    var lower = filter.toLowerCase();
+    sessions = sessions.filter(function(s) { return s.title.toLowerCase().indexOf(lower) !== -1; });
+  }
+  if (sessions.length === 0) {
+    list.innerHTML = '<div style="padding:28px 16px;text-align:center;color:var(--text-muted);font-size:13px;">暂无对话</div>';
+    return;
+  }
+  list.innerHTML = sessions.map(function(s) {
+    var active = s.id === currentSessionId ? 'active' : '';
+    var time = formatTime(s.timestamp);
+    var title = s.title || '新对话';
+    return '<div class="conv-item ' + active + '" onclick="switchConversation(\'' + s.id + '\')">' +
+      '<div class="conv-avatar"><svg viewBox="0 0 24 24" class="icon"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>' +
+      '<div class="conv-info"><div class="conv-title">' + escapeHtml(title) + '</div><div class="conv-meta">' + time + '</div></div>' +
+      '<button class="conv-delete" onclick="deleteSession(\'' + s.id + '\',event)"><svg viewBox="0 0 24 24" class="icon"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>' +
+      '</div>';
+  }).join('');
+}
+
+function renderCurrentSession() {
+  var session = findSession(currentSessionId);
+  var container = document.getElementById('messages');
+  var emptyState = document.getElementById('emptyState');
+  var title = document.getElementById('chatTitle');
+  container.innerHTML = '';
+  if (!session) { emptyState.style.display = 'flex'; title.textContent = '新对话'; return; }
+  title.textContent = session.title || '新对话';
+  if (!session.messages || session.messages.length === 0) {
+    emptyState.style.display = 'flex'; return;
+  }
+  emptyState.style.display = 'none';
+  for (var i = 0; i < session.messages.length; i++) {
+    addMessageBubble(session.messages[i].role, session.messages[i].content, false);
+  }
+  scrollToBottom();
+}
+
+function renderAll() { renderConversations(); renderCurrentSession(); }
+
+function switchConversation(id) {
+  currentSessionId = id;
+  renderAll();
+  closeSidebarMobile();
+}
+
+function newConversation() {
+  // 当前对话已有内容才新建，空对话不重复创建
+  var current = findSession(currentSessionId);
+  if (current && current.messages && current.messages.length > 0) {
+    currentSessionId = createSession();
+    renderAll();
+  }
+  closeSidebarMobile();
+  document.getElementById('questionInput').focus();
+}
+
+function closeSidebarMobile(e) {
+  if (e && e.target.closest('.sidebar-toggle, .chat-header-actions')) return;
+  document.getElementById('sidebar').classList.remove('open');
+}
+
+/* ========== API Helper ========== */
+function handleResult(r) {
+  if (!r.ok) return Promise.reject(new Error('请求失败 (' + r.status + ')'));
+  return r.json().then(function(res) {
+    if (res.resCode !== '200') return Promise.reject(new Error(res.msg || '操作失败'));
+    return res.obj;
+  });
+}
+
+/* ========== Chat ========== */
+var isStreaming = false;
+var currentAbortController = null;
+
+function toggleSend() {
+  if (isStreaming) {
+    stopStreaming();
+  } else {
+    sendMessage();
+  }
+}
+
+function stopStreaming() {
+  if (currentAbortController) {
+    currentAbortController.abort();
+  }
+}
+
+function updateSendButton() {
+  var btn = document.getElementById("sendBtn");
+  var icon = document.getElementById("sendIcon");
+  btn.classList.toggle("stop", isStreaming);
+  if (isStreaming) {
+    icon.innerHTML = '<rect x="6" y="6" width="12" height="12" rx="1"/>';
+  } else {
+    icon.innerHTML = '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>';
+  }
+}
+
+function onInputKeydown(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); toggleSend(); }
+}
+
+function addMessageBubble(role, content, save) {
+  var container = document.getElementById('messages');
+  var emptyState = document.getElementById('emptyState');
+  if (emptyState) emptyState.style.display = 'none';
+
+  var wrapper = document.createElement('div');
+  wrapper.className = 'message-wrapper ' + role;
+
+  var avatar = document.createElement('div');
+  avatar.className = 'message-avatar ' + role;
+  avatar.innerHTML = role === 'user' ? ICONS.user : ICONS.assistant;
+  wrapper.appendChild(avatar);
+
+  var body = document.createElement('div');
+  body.className = 'message-body';
+
+  var bubble = document.createElement('div');
+  bubble.className = 'message ' + role;
+  if (role === 'assistant' || role === 'error') {
+    bubble.innerHTML = marked.parse(content || '');
+  } else {
+    bubble.textContent = content;
+  }
+  body.appendChild(bubble);
+
+  if (content) {
+    var footer = document.createElement('div');
+    footer.className = 'message-footer';
+    footer.appendChild(makeCopyBtn(content));
+    body.appendChild(footer);
+  }
+  wrapper.appendChild(body);
+
+  container.appendChild(wrapper);
+  scrollToBottom();
+  if (save && currentSessionId) saveMessage(currentSessionId, role, content);
+  return wrapper;
+}
+
+function copyText(text, btn) { doCopy(text, btn); }
+
+function scrollToBottom() {
+  var container = document.getElementById('messagesContainer');
+  setTimeout(function() { container.scrollTop = container.scrollHeight; }, 10);
+}
+
+function sendMessage() {
+  if (isStreaming) return;
+  var input = document.getElementById('questionInput');
+  var question = input.value.trim();
+  if (!question) return;
+
+  input.value = '';
+  input.style.height = 'auto';
+
+  if (!currentSessionId) currentSessionId = createSession();
+  updateSessionTitle(currentSessionId, question);
+  renderConversations();
+  document.getElementById('chatTitle').textContent = question.substring(0, 30);
+
+  addMessageBubble('user', question, true);
+  isStreaming = true;
+  updateSendButton();
+
+  var wrapper = addMessageBubble('assistant', '');
+  var bubble = wrapper.querySelector('.message.assistant');
+  var cursorSpan = document.createElement('span');
+  cursorSpan.className = 'cursor-blink';
+  bubble.appendChild(cursorSpan);
+
+  var accumulated = '';
+  currentAbortController = new AbortController();
+
+  fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question: question, sessionId: currentSessionId }),
+    signal: currentAbortController.signal
+  }).then(function(r) { return handleStream(r, wrapper, bubble, cursorSpan, accumulated); })
+  .catch(function(err) {
+    if (err.name === 'AbortError') return;
+    cursorSpan.remove();
+    bubble.innerHTML = '请求失败: ' + escapeHtml(err.message);
+    bubble.className = 'message error';
+    isStreaming = false;
+    currentAbortController = null;
+    updateSendButton();
+    toast(err.message, 'error');
+  });
+}
+
+function handleStream(response, wrapper, bubble, cursorSpan, accumulated) {
+  if (!response.ok) throw new Error('请求失败 (' + response.status + ')');
+  // Handle non-SSE response (e.g. JSON error from GlobalExceptionHandler)
+  var ct = response.headers.get('Content-Type') || '';
+  if (ct.indexOf('text/event-stream') === -1) {
+    return response.json().then(function(data) {
+      cursorSpan.remove();
+      isStreaming = false;
+      updateSendButton();
+      var msg = data.msg || '请求失败';
+      bubble.innerHTML = msg;
+      bubble.className = 'message error';
+      toast(msg, 'error');
+    }).catch(function() {
+      throw new Error('响应格式错误');
+    });
+  }
+  var reader = response.body.getReader();
+  var decoder = new TextDecoder();
+  var buffer = '';
+  var currentEvent = '';
+
+  function read() {
+    reader.read().then(function(result) {
+      if (result.done) {
+        cursorSpan.remove();
+        isStreaming = false;
+        updateSendButton();
+        bubble.innerHTML = marked.parse(accumulated);
+        if (accumulated) {
+          saveMessage(currentSessionId, 'assistant', accumulated);
+          var bft = document.createElement("div"); bft.className = "message-footer"; bft.appendChild(makeCopyBtn(accumulated)); bubble.parentElement.appendChild(bft);
+        }
+        return;
+      }
+      buffer += decoder.decode(result.value, { stream: true });
+      var lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i].trim();
+        // Track event type (e.g. "event: error")
+        if (line.startsWith('event:')) {
+          currentEvent = line.substring(6).trim();
+          continue;
+        }
+        if (line.startsWith('data:')) {
+          var data = line.substring(5).trim();
+          if (data === '[DONE]') {
+            cursorSpan.remove();
+            isStreaming = false;
+            updateSendButton();
+            bubble.innerHTML = marked.parse(accumulated);
+            if (accumulated) {
+              saveMessage(currentSessionId, 'assistant', accumulated);
+              var dft = document.createElement("div"); dft.className = "message-footer"; dft.appendChild(makeCopyBtn(accumulated)); bubble.parentElement.appendChild(dft);
+            }
+            return;
+          }
+          // Handle error event
+          if (currentEvent === 'error') {
+            try {
+              var errData = JSON.parse(data);
+              cursorSpan.remove();
+              bubble.innerHTML = (errData.msg || '流式处理失败');
+              bubble.className = 'message error';
+              isStreaming = false;
+              updateSendButton();
+              toast(errData.msg || '流式处理失败', 'error');
+            } catch(e) {
+              console.warn('SSE error parse warning:', e);
+            }
+            currentEvent = '';
+            continue;
+          }
+          try {
+            var parsed = JSON.parse(data);
+            if (parsed.token) {
+              accumulated += parsed.token;
+              bubble.innerText = accumulated;
+              bubble.appendChild(cursorSpan);
+              scrollToBottom();
+            }
+          } catch(e) { console.warn('SSE parse warning:', e); }
+          currentEvent = '';
+        }
+      }
+      read();
+    }).catch(function(err) {
+      cursorSpan.remove();
+      isStreaming = false;
+      currentAbortController = null;
+      updateSendButton();
+      if (err.name === 'AbortError') {
+        bubble.innerHTML = marked.parse(accumulated);
+        if (accumulated) {
+          var aft = document.createElement("div");
+          aft.className = "message-footer";
+          aft.appendChild(makeCopyBtn(accumulated));
+          bubble.parentElement.appendChild(aft);
+        }
+        return;
+      }
+      bubble.innerHTML = marked.parse(accumulated + '\n\n**错误:** ' + escapeHtml(err.message));
+      bubble.className = 'message error';
+      toast(err.message, 'error');
+    });
+  }
+  read();
+}
+
+/* ========== Auto Resize ========== */
+document.getElementById('questionInput').addEventListener('input', function() {
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 160) + 'px';
+});
+
+/* ========== Theme ========== */
+function getTheme() {
+  return localStorage.getItem('rag_theme') || 'light';
+}
+function setTheme(theme) {
+  localStorage.setItem('rag_theme', theme);
+  var isLight = theme === 'light';
+  document.documentElement.classList.toggle('light-theme', !isLight);
+  document.getElementById('themeLabel').textContent = isLight ? '深色模式' : '亮色模式';
+  var icon = document.getElementById('themeIcon');
+  if (isLight) {
+    icon.innerHTML = '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>';
+  } else {
+    icon.innerHTML = '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>';
+  }
+}
+function toggleTheme() { setTheme(getTheme() === 'light' ? 'dark' : 'light'); }
+
+/* ========== Knowledge Base ========== */
+function openKnowledgeBase() {
+  document.getElementById('kbPanel').classList.add('open');
+  document.getElementById('kbOverlay').classList.add('open');
+  loadDocList();
+}
+function closeKnowledgeBase() {
+  document.getElementById('kbPanel').classList.remove('open');
+  document.getElementById('kbOverlay').classList.remove('open');
+}
+function onFileSelected(e) {
+  var file = e.target.files[0];
+  if (!file) return;
+  uploadFile(file);
+  e.target.value = '';
+}
+
+var uploadArea = document.getElementById('kbUploadArea');
+uploadArea.addEventListener('dragover', function(e) { e.preventDefault(); this.classList.add('dragover'); });
+uploadArea.addEventListener('dragleave', function() { this.classList.remove('dragover'); });
+uploadArea.addEventListener('drop', function(e) {
+  e.preventDefault(); this.classList.remove('dragover');
+  var file = e.dataTransfer.files[0];
+  if (file) uploadFile(file);
+});
+
+function uploadFile(file) {
+  var ext = file.name.toLowerCase().slice(file.name.lastIndexOf('.'));
+  var valid = ['.pdf','.txt','.md','.csv','.json','.xml','.xlsx','.xls','.docx','.pptx','.html','.htm'];
+  if (valid.indexOf(ext) === -1) { showUploadError('不支持的文件格式'); return; }
+  if (file.size > 20*1024*1024) { showUploadError('文件大小不能超过 20MB'); return; }
+  hideUploadError();
+  var fd = new FormData(); fd.append('file', file);
+  fetch('/api/documents/upload', { method: 'POST', body: fd })
+    .then(handleResult)
+    .then(function(doc) { toast('"' + doc.documentName + '" 上传成功 (' + doc.chunks + ' 分块)', 'success'); loadDocList(); })
+    .catch(function(err) { showUploadError(err.message); toast('上传失败', 'error'); });
+}
+function showUploadError(m) { var el = document.getElementById('kbUploadError'); el.textContent = m; el.classList.add('visible'); }
+function hideUploadError() { document.getElementById('kbUploadError').classList.remove('visible'); }
+
+function scanDocuments() {
+  fetch('/api/documents/scan', { method: 'POST' })
+    .then(handleResult)
+    .then(function() { toast('目录扫描完成', 'success'); loadDocList(); })
+    .catch(function(e) { toast('扫描失败: ' + e.message, 'error'); });
+}
+
+function loadDocList() {
+  var list = document.getElementById('kbDocList');
+  fetch('/api/documents')
+    .then(handleResult)
+    .then(function(docs) {
+      if (!docs || docs.length === 0) { list.innerHTML = '<li class="doc-empty">暂无文档</li>'; return; }
+      list.innerHTML = docs.map(function(d) {
+        return '<li class="doc-item">' +
+          '<span class="doc-icon"><svg viewBox="0 0 24 24" class="icon"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>' +
+          '<span class="doc-info"><div class="doc-name">' + escapeHtml(d.documentName) + '</div><div class="doc-meta">' + d.chunks + ' 分块</div></span>' +
+          '<button class="doc-delete-btn" onclick="deleteDocument(' + d.id + ', event)" title="删除文档"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>' +
+          '</li>';
+      }).join('');
+    })
+    .catch(function(err) { list.innerHTML = '<li class="doc-empty">加载失败: ' + escapeHtml(err.message) + '</li>'; });
+}
+
+function deleteDocument(id, e) {
+  if (e) e.stopPropagation();
+  showConfirmDialog('确认删除', '确定删除此文档？文档及向量数据将被永久删除。', function() {
+    fetch('/api/documents/' + id, { method: 'DELETE' })
+      .then(handleResult)
+      .then(function() { toast('文档已删除', 'success'); loadDocList(); })
+      .catch(function(err) { toast('删除失败: ' + err.message, 'error'); });
+  });
+}
+
+/* ========== Utilities ========== */
+function escapeHtml(s) {
+  var d = document.createElement('div'); d.appendChild(document.createTextNode(s)); return d.innerHTML;
+}
+function formatTime(iso) {
+  if (!iso) return '';
+  var d = new Date(iso), now = new Date();
+  if (d.toDateString() === now.toDateString()) return pad(d.getHours())+':'+pad(d.getMinutes());
+  var yd = new Date(now); yd.setDate(yd.getDate()-1);
+  if (d.toDateString() === yd.toDateString()) return '昨天';
+  return (d.getMonth()+1)+'/'+d.getDate();
+}
+function pad(n) { return n < 10 ? '0'+n : ''+n; }
+
+function toast(msg, type) {
+  type = type || 'info';
+  var c = document.getElementById('toastContainer');
+  var el = document.createElement('div');
+  el.className = 'toast ' + type;
+  var icons = {
+    success: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="16 8 10 16 7 13"/></svg>',
+    error: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+    info: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>'
+  };
+  el.innerHTML = (icons[type] || icons.info) + '<span>' + escapeHtml(msg) + '</span>';
+  c.appendChild(el);
+  setTimeout(function() { el.style.opacity = '0'; el.style.transform = 'translateY(8px) scale(0.96)'; el.style.transition = 'all 0.25s ease'; setTimeout(function() { el.remove(); }, 250); }, 3500);
+}
+
+/* ========== Init ========== */
+(function init() {
+  setTheme(getTheme());
+  var sessions = loadSessions();
+  currentSessionId = sessions.length > 0 ? sessions[0].id : createSession();
+  renderAll();
+})();
+</script>
+</body>
+</html>

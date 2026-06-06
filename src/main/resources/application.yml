@@ -1,0 +1,177 @@
+# ===================================================================
+#  RAG Demo - Application Configuration
+# ===================================================================
+
+server:
+  port: 8080
+
+# ===================================================================
+#  API 密钥
+#  注意: DeepSeek 只支持对话，不支持 Embedding。
+#  因此需要为 Embedding 额外配置一个支持 OpenAI 兼容 Embedding 的提供商。
+#  如 OpenAI (text-embedding-3-small)、SiliconFlow、DashScope 等。
+# ===================================================================
+app:
+  rag:
+    # DeepSeek Chat API 密钥（可设为环境变量 APP_RAG_CHAT_API_KEY）
+    chat-api-key:
+    # Chat 模型地址（支持任意 OpenAI 兼容 API）
+    chat-base-url: https://api.deepseek.com
+    # Chat 模型名称
+    chat-model-name: deepseek-v4-flash
+    # Embedding API 密钥（可设为环境变量 APP_RAG_EMBEDDING_API_KEY）
+    embedding-api-key:
+    # Embedding 模型地址
+    embedding-base-url: https://api.siliconflow.cn/v1
+    # Embedding 模型名称
+    embedding-model-name: BAAI/bge-large-zh-v1.5
+    # Rerank API 密钥（默认复用 Embedding key，可单独设置 APP_RAG_RERANK_API_KEY）
+    rerank-api-key: ${app.rag.embedding-api-key}
+    # Rerank 模型地址
+    rerank-base-url: https://api.siliconflow.cn/v1
+    # Rerank 模型名称
+    rerank-model-name: BAAI/bge-reranker-v2-m3
+    # 向量检索分数阈值（≥此值的文档会进入 Rerank 阶段，建议 0.75-0.85）
+    score-threshold: 0.80
+    document-scan-path: data/docs          # 启动时自动扫描的文档目录
+  # ===================================================================
+  #  限流配置（仅影响 /api/chat 接口）
+  #  可通过环境变量覆盖，如 APP_RATE_LIMIT_IP_RATE=10
+  # ===================================================================
+  rate-limit:
+    ip-rate: 20                            # IP 令牌桶容量及补充速率（次/分钟）
+    daily-max: 10000                       # 全局每日调用上限
+  # ===================================================================
+  #  飞书文档同步
+  # ===================================================================
+  feishu:
+    app-id:                                # 可设为环境变量 APP_FEISHU_APP_ID
+    app-secret:                            # 可设为环境变量 APP_FEISHU_APP_SECRET
+    wiki-id:                               # 可设为环境变量 APP_FEISHU_WIKI_ID
+    cron: 0 0 */12 * * ?
+    sync-enabled: false
+
+# ===================================================================
+#  向量数据库配置（三选一）
+#  通过 vector.store.type 切换
+# ===================================================================
+vector:
+  store:
+    type: in-memory    # 可选值: in-memory | chroma | milvus
+
+# ----- InMemory（小项目/开发测试）-----
+# 进程内内存存储，无需任何外部服务
+# 应用重启后数据丢失，适合开发调试
+# 无需额外配置
+
+# ----- Chroma（中型项目）-----
+chroma:
+  host: localhost                         # Chroma 服务地址
+  port: 8000                              # Chroma 服务端口
+  collection-name: rag_demo               # 集合名称
+
+# ----- Milvus（大型/生产）-----
+milvus:
+  host: localhost                         # Milvus 服务地址
+  port: 19530                             # Milvus 服务端口
+  collection-name: rag_demo               # 集合名称
+  dimension: 1024                         # 向量维度（需与 embedding 模型匹配） text-embedding-3-small:1536  BAAI/bge-large-zh-v1.5:1024
+
+# ===================================================================
+#  DeepSeek 对话模型（通过 OpenAI 兼容接口调用）
+#  ✅ DeepSeek 对话 API 正常
+#
+#  模型说明：
+#    deepseek-v4-pro    旗舰版，1.6T 总参/49B 激活，质量最高
+#    deepseek-v4-flash  快速版，284B 总参/13B 激活（推荐，兼顾速度与质量）
+#    deepseek-chat      ⚠ 2026-07-24 起废弃，当前映射到 v4-flash
+#
+#  推荐参数：
+#    temperature: 1.0  （DeepSeek 官方默认值）
+#    context: 1M tokens
+# ===================================================================
+langchain4j:
+  open-ai:
+    chat-model:
+      api-key: ${app.rag.chat-api-key}
+      base-url: ${app.rag.chat-base-url}
+      model-name: ${app.rag.chat-model-name}
+      temperature: 1.0                    # DeepSeek 推荐值（0-2）
+
+# ===================================================================
+#  Embedding 模型（OpenAI 兼容接口）
+#  ⚠ DeepSeek 不提供 Embedding API！
+#  请将以下配置指向支持 Embedding 的服务：
+#
+#  推荐服务：
+#    SiliconFlow（免费额度）:
+#      base-url: https://api.siliconflow.cn/v1
+#      model: BAAI/bge-large-zh-v1.5
+#
+#    OpenAI:
+#      base-url: https://api.openai.com/v1
+#      model: text-embedding-3-small
+#
+#    DashScope（阿里云）:
+#      base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+#      model: text-embedding-v1
+# ===================================================================
+    embedding-model:
+      api-key: ${app.rag.embedding-api-key}
+      base-url: ${app.rag.embedding-base-url}
+      model-name: ${app.rag.embedding-model-name}
+
+    # ===================================================================
+    #  Rerank 模型（SiliconFlow BGE Reranker）
+    #  对向量检索结果进行语义重排序，提高送入 LLM 的文档质量
+    #  与 Embedding 共用同一服务商（SiliconFlow）
+    # ===================================================================
+    rerank-model:
+      api-key: ${app.rag.rerank-api-key}
+      base-url: ${app.rag.rerank-base-url}
+      model-name: ${app.rag.rerank-model-name}
+
+# ===================================================================
+#  Redis 配置（用于对话上下文存储）
+# ===================================================================
+spring:
+  redis:
+    host: localhost
+    port: 6379
+    password:
+    timeout: 3000
+    lettuce:
+      pool:
+        max-active: 8
+        max-idle: 4
+        min-idle: 0
+
+  # ===================================================================
+  #  MySQL 数据源配置（用于文档元数据存储）
+  # ===================================================================
+  datasource:
+    url: jdbc:mysql://localhost:3306/rag_demo?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: root
+    password: 123456
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      minimum-idle: 4
+      maximum-pool-size: 12
+
+  servlet:
+    multipart:
+      max-file-size: 50MB                 # 单文件最大体积
+      max-request-size: 50MB              # 单次请求最大体积
+
+# ===================================================================
+#  MyBatis-Plus 配置
+# ===================================================================
+mybatis-plus:
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.rag.demo.model
+  global-config:
+    db-config:
+      id-type: auto
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
