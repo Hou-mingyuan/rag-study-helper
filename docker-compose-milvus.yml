@@ -77,7 +77,7 @@ services:
     container_name: rag-mysql
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
-      MYSQL_DATABASE: rag_demo
+      MYSQL_DATABASE: rag_study_helper
     volumes:
       - mysql-data:/var/lib/mysql
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
@@ -111,7 +111,7 @@ services:
       MILVUS_HOST: milvus
       MILVUS_PORT: 19530
       # === MySQL ===
-      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/rag_demo?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/rag_study_helper?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
       SPRING_DATASOURCE_USERNAME: root
       SPRING_DATASOURCE_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
       # === Redis ===

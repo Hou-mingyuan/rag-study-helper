@@ -1,5 +1,5 @@
 # ===================================================================
-#  RAG Demo - Application Configuration
+#  RAG Study Helper - Application Configuration
 # ===================================================================
 
 server:
@@ -68,13 +68,13 @@ vector:
 chroma:
   host: localhost                         # Chroma 服务地址
   port: 8000                              # Chroma 服务端口
-  collection-name: rag_demo               # 集合名称
+  collection-name: rag_study_helper               # 集合名称
 
 # ----- Milvus（大型/生产）-----
 milvus:
   host: localhost                         # Milvus 服务地址
   port: 19530                             # Milvus 服务端口
-  collection-name: rag_demo               # 集合名称
+  collection-name: rag_study_helper               # 集合名称
   dimension: 1024                         # 向量维度（需与 embedding 模型匹配） text-embedding-3-small:1536  BAAI/bge-large-zh-v1.5:1024
 
 # ===================================================================
@@ -150,7 +150,7 @@ spring:
   #  MySQL 数据源配置（用于文档元数据存储）
   # ===================================================================
   datasource:
-    url: jdbc:mysql://localhost:3306/rag_demo?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://localhost:3306/rag_study_helper?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
     username: root
     password: 123456
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -168,7 +168,7 @@ spring:
 # ===================================================================
 mybatis-plus:
   mapper-locations: classpath:mapper/*.xml
-  type-aliases-package: com.rag.demo.model
+  type-aliases-package: com.rag.studyhelper.model
   global-config:
     db-config:
       id-type: auto

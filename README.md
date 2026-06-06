@@ -1,4 +1,4 @@
-# RAG Demo
+# RAG Study Helper
 
 基于 **Spring Boot 2.6 + LangChain4j 0.35** 构建的企业级 RAG（Retrieval-Augmented Generation）问答系统，支持多轮对话、多源文档知识库、语义检索重排序、飞书知识库自动同步，以及多实例水平扩展。
 
@@ -130,8 +130,8 @@ Docker Compose 会同时启动以下服务：
 # 1. 确保 MySQL 和 Redis 服务已启动
 
 # 2. 创建数据库并初始化表结构
-mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS rag_demo;"
-mysql -u root -p rag_demo < init.sql
+mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS rag_study_helper;"
+mysql -u root -p rag_study_helper < init.sql
 
 # 3. 编辑 application.yml 或通过环境变量传入 API Key
 
@@ -437,7 +437,7 @@ app:
 ## 项目结构
 
 ```
-src/main/java/com/rag/demo/
+src/main/java/com/rag/studyhelper/
 ├── controller/
 │   ├── ChatController.java              # SSE 流式问答接口
 │   └── DocumentController.java          # 文档管理接口
@@ -477,7 +477,7 @@ src/main/java/com/rag/demo/
 │   └── config/
 │       ├── FeishuProperties.java        # 配置绑定
 │       └── FeishuConfig.java            # Spring Bean 装配
-└── RagDemoApplication.java
+└── RagStudyHelperApplication.java
 
 src/main/resources/
 ├── application.yml                      # 主配置
@@ -486,7 +486,7 @@ src/main/resources/
 项目根目录/
 ├── init.sql                             # MySQL DDL（首次启动自动执行）
 
-src/test/java/com/rag/demo/
+src/test/java/com/rag/studyhelper/
 ├── config/
 │   ├── GlobalExceptionHandlerTest.java   # 异常处理单元测试
 │   └── ExceptionTestController.java      # 测试辅助 Controller
@@ -499,7 +499,7 @@ src/test/java/com/rag/demo/
 ├── feishu/
 │   ├── client/FeishuClientTest.java
 │   └── service/FeishuSyncServiceTest.java
-└── RagDemoApplicationTests.java
+└── RagStudyHelperApplicationTests.java
 ```
 
 ---

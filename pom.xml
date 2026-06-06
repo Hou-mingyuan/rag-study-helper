@@ -3,10 +3,10 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <groupId>com.rag</groupId>
-    <artifactId>demo</artifactId>
+    <artifactId>rag-study-helper</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name>rag_demo</name>
-    <description>rag_demo</description>
+    <name>rag-study-helper</name>
+    <description>rag-study-helper</description>
     <properties>
         <java.version>1.8</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -194,7 +194,7 @@
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <version>${spring-boot.version}</version>
                 <configuration>
-                    <mainClass>com.rag.demo.RagDemoApplication</mainClass>
+                    <mainClass>com.rag.studyhelper.RagStudyHelperApplication</mainClass>
 <!--                    <skip>true</skip>-->
                 </configuration>
                 <executions>
