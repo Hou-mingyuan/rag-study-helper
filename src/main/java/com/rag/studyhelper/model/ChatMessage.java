@@ -5,6 +5,9 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;
 
+/**
+ * LLM 上下文格式
+ */
 @Data
 @Accessors(chain = true)
 @AllArgsConstructor

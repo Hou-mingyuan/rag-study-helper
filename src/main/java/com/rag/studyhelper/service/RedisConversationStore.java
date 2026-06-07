@@ -13,11 +13,16 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * 会话存储服务
+ */
 @Service
 public class RedisConversationStore implements ConversationStore {
 
     private static final Logger log = LoggerFactory.getLogger(RedisConversationStore.class);
-    private static final int MAX_ROUNDS = 5;
+    // 最大轮次 超出删除（用户输入 + LLM输出 为一轮）
+    private static final int MAX_ROUNDS = 10;
+    // 一小时超时时间
     private static final int TTL_HOURS = 1;
     private static final String KEY_PREFIX = "session:";
 
@@ -29,6 +34,9 @@ public class RedisConversationStore implements ConversationStore {
         this.objectMapper = new ObjectMapper();
     }
 
+    /**
+     * 获取上下文
+     */
     @Override
     public List<ChatMessage> getHistory(String sessionId) {
         String json = redisTemplate.opsForValue().get(KEY_PREFIX + sessionId);
@@ -43,6 +51,9 @@ public class RedisConversationStore implements ConversationStore {
         }
     }
 
+    /**
+     * 添加轮次
+     */
     @Override
     public void addTurn(String sessionId, String userMessage, String assistantMessage) {
         List<ChatMessage> history = getHistory(sessionId);
@@ -52,6 +63,7 @@ public class RedisConversationStore implements ConversationStore {
         history.add(new ChatMessage("user", userMessage));
         history.add(new ChatMessage("assistant", assistantMessage));
         int maxMessages = MAX_ROUNDS * 2;
+        // 删除多余的轮次
         while (history.size() > maxMessages) {
             history.remove(0);
         }
@@ -63,6 +75,9 @@ public class RedisConversationStore implements ConversationStore {
         }
     }
 
+    /**
+     * 清空上下文历史
+     */
     @Override
     public void clear(String sessionId) {
         redisTemplate.delete(KEY_PREFIX + sessionId);

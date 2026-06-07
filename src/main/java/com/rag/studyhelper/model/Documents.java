@@ -9,6 +9,9 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
+/**
+ * 文档信息 表
+ */
 @Data
 @TableName("documents")
 public class Documents {

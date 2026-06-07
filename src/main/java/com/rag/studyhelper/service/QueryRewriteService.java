@@ -10,6 +10,9 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 import java.util.stream.Collectors;
 
+/**
+ * 查询改写服务
+ */
 @Service
 public class QueryRewriteService {
 
@@ -18,34 +21,42 @@ public class QueryRewriteService {
     @Autowired
     private OpenAiChatModel chatModel;
 
-    public String rewrite(String originalQuestion, List<ChatMessage> history) {
-        // Only rewrite when there is history and the question likely needs context
-        if (history.isEmpty() || !needsRewrite(originalQuestion)) {
+    /**
+     * 改写逻辑
+     */
+    public String rewrite(String originalQuestion, List<ChatMessage> history, int rewriteWordCount) {
+        // 如果没有上下文或者没有超过 rewriteWordCount 的字数，就没有改写的必要了
+        if (history.isEmpty() || !needsRewrite(originalQuestion,rewriteWordCount)) {
             return originalQuestion;
         }
 
-        log.info("Rewriting question with {} rounds of history", history.size() / 2);
+        log.info("rewrite question with {} rounds of history", history.size() / 2);
 
         String prompt = buildRewritePrompt(originalQuestion, history);
         String rewritten = chatModel.generate(prompt).trim();
 
-        log.info("Rewritten: \"{}\" → \"{}\"", originalQuestion, rewritten);
+        log.info("rewrite question : \"{}\" → \"{}\"", originalQuestion, rewritten);
         return rewritten;
     }
 
-    static boolean needsRewrite(String question) {
-        if (question.length() < 5) {
+    /**
+     * 是否需要改写
+     */
+    static boolean needsRewrite(String question, int rewriteWordCount) {
+        if (question.length() < rewriteWordCount) {
             return true;
         }
-        String s = question;
-        return s.contains("这") || s.contains("那")
-                || s.contains("它") || s.contains("他") || s.contains("她")
-                || s.contains("它们") || s.contains("他们") || s.contains("她们")
-                || s.contains("该") || s.contains("此")
-                || s.contains("上面") || s.contains("上边") || s.contains("上述")
-                || s.contains("刚才") || s.contains("之前");
+        return question.contains("这") || question.contains("那")
+                || question.contains("它") || question.contains("他") || question.contains("她")
+                || question.contains("它们") || question.contains("他们") || question.contains("她们")
+                || question.contains("该") || question.contains("此")
+                || question.contains("上面") || question.contains("上边") || question.contains("上述")
+                || question.contains("刚才") || question.contains("之前");
     }
 
+    /**
+     * 构建查询改写提示
+     */
     private String buildRewritePrompt(String question, List<ChatMessage> history) {
         String historyText = history.stream()
                 .map(m -> (m.getRole().equals("user") ? "用户" : "助手") + "：" + m.getContent())

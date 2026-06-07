@@ -10,11 +10,18 @@ import org.springframework.context.annotation.Configuration;
 
 import java.util.concurrent.TimeUnit;
 
+/**
+ * 飞书配置
+ */
 @Configuration
 public class FeishuConfig {
 
     private static final String FEISHU_BASE_URL = "https://open.feishu.cn";
 
+    /**
+     * app.feishu.sync-enabled 不等于 true 的时候 不注入 spring bean
+     * 不需要这个功能的可以直接删掉 feishu 包下的东西，留着也不影响
+     */
     @Bean
     @ConditionalOnProperty(name = "app.feishu.sync-enabled", havingValue = "true")
     public FeishuClient feishuClient(FeishuProperties properties) {
@@ -37,6 +44,6 @@ public class FeishuConfig {
             FeishuClient feishuClient,
             DocumentIngestionService ingestionService,
             FeishuProperties properties) {
-        return new FeishuSyncService(feishuClient, ingestionService, properties.getWikiId());
+        return new FeishuSyncService(feishuClient, ingestionService, properties.getSpaceId());
     }
 }

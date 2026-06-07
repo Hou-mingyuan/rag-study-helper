@@ -3,16 +3,20 @@ package com.rag.studyhelper.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.data.segment.TextSegment;
+import okhttp3.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.*;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
 
+import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
+/**
+ * 重排序 服务
+ */
 @Service
 public class RerankService {
 
@@ -29,29 +33,26 @@ public class RerankService {
     @Value("${langchain4j.open-ai.rerank-model.model-name}")
     String modelName;
 
-    private final RestTemplate restTemplate;
+    private final OkHttpClient httpClient;
     private final ObjectMapper objectMapper;
 
     public RerankService() {
-        this.restTemplate = createRestTemplate();
+        this.httpClient = createHttpClient();
         this.objectMapper = new ObjectMapper();
     }
 
-    // package-private for testing
-    RerankService(RestTemplate restTemplate) {
-        this.restTemplate = restTemplate;
-        this.objectMapper = new ObjectMapper();
+    private static OkHttpClient createHttpClient() {
+        return new OkHttpClient.Builder()
+                .connectTimeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                .readTimeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                .build();
     }
 
-    private static RestTemplate createRestTemplate() {
-        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
-                new org.springframework.http.client.SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(TIMEOUT_MS);
-        factory.setReadTimeout(TIMEOUT_MS);
-        return new RestTemplate(factory);
-    }
-
-    public List<TextSegment> rerank(String query, List<TextSegment> documents) {
+    /**
+     * 重排序
+     * 就是把你查的内容和从向量数据库得到的文档分片对比，把最先关的文档排前面
+     */
+    public List<TextSegment> rerank(String query, List<TextSegment> documents, int topN) {
         if (documents.isEmpty()) {
             return documents;
         }
@@ -62,23 +63,25 @@ public class RerankService {
         requestBody.put("documents", documents.stream()
                 .map(TextSegment::text)
                 .collect(Collectors.toList()));
-        int topN = Math.min(5, documents.size());
         requestBody.put("top_n", topN);
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.setBearerAuth(apiKey);
+        MediaType JSON = MediaType.parse("application/json; charset=utf-8");
 
         try {
+            String json = objectMapper.writeValueAsString(requestBody);
             String url = baseUrl + "/rerank";
-            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
+            Request request = new Request.Builder()
+                    .url(url)
+                    .post(RequestBody.create(json, JSON))
+                    .header("Authorization", "Bearer " + apiKey)
+                    .build();
 
             log.info("Calling SiliconFlow Rerank: {} documents, query=\"{}\"", documents.size(), truncate(query, 50));
-            ResponseEntity<String> response = restTemplate.postForEntity(url, entity, String.class);
-
-            String body = response.getBody();
-            if (body != null && !body.isEmpty()) {
-                return parseAndReorder(body, documents);
+            try (Response response = httpClient.newCall(request).execute()) {
+                String body = response.body() != null ? response.body().string() : "";
+                if (response.isSuccessful() && !body.isEmpty()) {
+                    return parseAndReorder(body, documents);
+                }
             }
         } catch (Exception e) {
             log.warn("Rerank API call failed, falling back to original order: {}", e.getMessage());
@@ -87,6 +90,9 @@ public class RerankService {
         return documents;
     }
 
+    /**
+     * 解析重排序的结果
+     */
     private List<TextSegment> parseAndReorder(String responseBody, List<TextSegment> original) {
         try {
             JsonNode root = objectMapper.readTree(responseBody);

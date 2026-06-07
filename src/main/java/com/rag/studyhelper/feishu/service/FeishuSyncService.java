@@ -18,13 +18,19 @@ import org.springframework.scheduling.annotation.Scheduled;
 import java.util.List;
 import java.util.stream.Collectors;
 
+/**
+ * 这里没有 @Service 注解是因为需要在 FeishuConfig 中配置注入
+ */
 public class FeishuSyncService {
 
     private static final Logger log = LoggerFactory.getLogger(FeishuSyncService.class);
 
+    // 自定义飞书客户端
     private final FeishuClient feishuClient;
+    // 处理文档的工具
     private final DocumentIngestionService ingestionService;
-    private final String wikiId;
+    // 飞书 wiki 空间ID
+    private final String spaceId;
 
     @Autowired
     private DocumentsMapper documentsMapper;
@@ -36,15 +42,16 @@ public class FeishuSyncService {
     private EmbeddingStore<TextSegment> embeddingStore;
 
     public FeishuSyncService(FeishuClient feishuClient,
-                             DocumentIngestionService ingestionService, String wikiId) {
-        if (wikiId == null || wikiId.trim().isEmpty()) {
-            throw new IllegalArgumentException("app.feishu.wiki-id 未配置，可通过 FeishuClient.listSpaces() 获取可用 space_id");
+                             DocumentIngestionService ingestionService, String spaceId) {
+        if (spaceId == null || spaceId.trim().isEmpty()) {
+            throw new IllegalArgumentException("app.feishu.space-id 未配置，可通过 FeishuClient.listSpaces() 获取可用 space_id");
         }
         this.feishuClient = feishuClient;
         this.ingestionService = ingestionService;
-        this.wikiId = wikiId.trim();
+        this.spaceId = spaceId.trim();
     }
 
+//    可以用来测试启动后 飞书文档 同步功能
 //    @PostConstruct
 //    public void init(){
 //        syncWiki();
@@ -52,9 +59,9 @@ public class FeishuSyncService {
 
     @Scheduled(cron = "${app.feishu.cron}")
     public void syncWiki() {
-        log.info("Starting Feishu wiki sync for space: {}", wikiId);
+        log.info("Starting Feishu wiki sync for space: {}", spaceId);
         try {
-            List<WikiNode> nodes = feishuClient.getWikiNodeTree(wikiId);
+            List<WikiNode> nodes = feishuClient.getWikiNodeTree(spaceId);
             log.info("Found {} nodes in wiki", nodes.size());
 
             int synced = 0, skipped = 0, failed = 0;
@@ -81,7 +88,7 @@ public class FeishuSyncService {
                         case "doc":
                         case "docx":
                             content = feishuClient.getDocumentContent(node.getObjToken());
-                            fileName = node.getNodeTitle();
+                            fileName = node.getNodeTitle() + "_文档";
                             break;
                         case "sheet":
                             content = feishuClient.getSheetContent(node.getObjToken());
@@ -97,29 +104,28 @@ public class FeishuSyncService {
                     }
 
                     // 如果是更新，先删旧向量和映射记录
-                    Documents existing = documentsMapper.selectOne(
-                            Wrappers.<Documents>lambdaQuery()
-                                    .eq(Documents::getFeishuNodeToken, nodeToken)
-                    );
-                    if (existing != null) {
+                    if (doc != null) {
+                        // 查询旧文档相关的向量映射
                         List<DocumentChunks> oldChunks = documentChunksMapper.selectList(
                                 Wrappers.<DocumentChunks>lambdaQuery()
-                                        .eq(DocumentChunks::getDocumentId, existing.getId())
+                                        .eq(DocumentChunks::getDocumentId, doc.getId())
                         );
-                        for (DocumentChunks chunk : oldChunks) {
-                            try {
-                                embeddingStore.remove(chunk.getVectorId());
-                            } catch (Exception e) {
-                                log.warn("Failed to remove old vector {}: {}", chunk.getVectorId(), e.getMessage());
-                            }
-                        }
+                        List<String> vectorIds = oldChunks.stream()
+                                .map(DocumentChunks::getVectorId)
+                                .collect(Collectors.toList());
+                        // 删除向量
+                        embeddingStore.removeAll(vectorIds);
+
+                        // 删除映射记录
                         documentChunksMapper.delete(
                                 Wrappers.<DocumentChunks>lambdaQuery()
-                                        .eq(DocumentChunks::getDocumentId, existing.getId())
+                                        .eq(DocumentChunks::getDocumentId, doc.getId())
                         );
-                        documentsMapper.deleteById(existing.getId());
+                        // 删除文档
+                        documentsMapper.deleteById(doc.getId());
                     }
 
+                    // 插入文档 RAG 流程
                     ingestionService.ingestFeishuDocument(fileName, content, nodeToken, updateTime, objType);
                     synced++;
                     log.info("  Synced: {} ({})", node.getNodeTitle(), nodeToken);
@@ -147,13 +153,11 @@ public class FeishuSyncService {
                             Wrappers.<DocumentChunks>lambdaQuery()
                                     .eq(DocumentChunks::getDocumentId, removed.getId())
                     );
-                    for (DocumentChunks chunk : chunks) {
-                        try {
-                            embeddingStore.remove(chunk.getVectorId());
-                        } catch (Exception e) {
-                            log.warn("Failed to remove vector {}: {}", chunk.getVectorId(), e.getMessage());
-                        }
-                    }
+                    List<String> vectorIds = chunks.stream()
+                            .map(DocumentChunks::getVectorId)
+                            .collect(Collectors.toList());
+                    embeddingStore.removeAll(vectorIds);
+
                     documentChunksMapper.delete(
                             Wrappers.<DocumentChunks>lambdaQuery()
                                     .eq(DocumentChunks::getDocumentId, removed.getId())

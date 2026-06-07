@@ -5,6 +5,10 @@ import com.rag.studyhelper.config.RateLimit;
 import com.rag.studyhelper.model.ChatRequest;
 import com.rag.studyhelper.service.RagQueryService;
 import com.rag.studyhelper.utils.Results;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.model.StreamingResponseHandler;
+import dev.langchain4j.model.output.Response;
+import org.apache.poi.ss.formula.functions.T;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,6 +23,9 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * 聊天接口
+ */
 @RestController
 @RequestMapping("/api")
 public class ChatController {
@@ -30,22 +37,36 @@ public class ChatController {
     private RagQueryService ragQueryService;
 
     /**
+     * 整条链路逻辑
+     * 前端浏览器                    Java 后端                    LangChain OpenAI  API
+     * │                           │                            │
+     * │── POST /api/chat ────────→│                            │
+     * │                           │── HTTP streaming request ──→│
+     * │                           │                            │
+     * │   ← SSE: {"token":"你"}   │◄── "你" (onNext) ────────── │
+     * │   ← SSE: {"token":"好"}   │◄── "好" (onNext) ────────── │
+     * │   ← SSE: [DONE]           │◄── complete ─────────────── │
+     * <br/>
      * 关于请求中断：LangChain4j 0.35.0 未暴露 HTTP 连接句柄，无法主动取消 LLM 调用
-     *            升级到 LangChain4j 1.0+（需 JDK 17）后可做到真正的请求级取消
-     *            所以我只是前端加了假的终止链接，后续可无痛升级
+     * 升级到 LangChain4j 1.0+（需 JDK 17）后可做到真正的请求级取消
+     * 为了方便后续升级，我没有做手动的 Java 后端与 LLM 的请求中断交互
+     * 只是让前端和java后端SSE断开连接
      */
     @RateLimit
     @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter chat(@RequestBody ChatRequest request) {
-        SseEmitter emitter = new SseEmitter(120_000L);
+        // 与前端交互的 SSE 响应
+        SseEmitter emitter = new SseEmitter(60_000L);
 
         try {
-            ragQueryService.streamAnswer(request.getSessionId(), request.getQuestion(), new RagQueryService.StreamingCallback() {
+            ragQueryService.streamAnswer(request.getSessionId(), request.getQuestion(), new StreamingResponseHandler<AiMessage>() {
+                // 处理 LLM 返回的分词结果
                 @Override
-                public void onToken(String token) {
+                public void onNext(String token) {
                     try {
                         Map<String, String> data = new HashMap<>();
                         data.put("token", token);
+                        // 发送 json 格式给前端
                         emitter.send(SseEmitter.event()
                                 .data(OBJECT_MAPPER.writeValueAsString(data)));
                     } catch (IOException e) {
@@ -53,20 +74,24 @@ public class ChatController {
                     }
                 }
 
+                // 处理 SSE 结束信息
                 @Override
-                public void onComplete() {
+                public void onComplete(Response<AiMessage> response) {
                     try {
                         emitter.send(SseEmitter.event().data("[DONE]"));
+                        // 关闭 SSE 连接
                         emitter.complete();
                     } catch (IOException e) {
                         emitter.completeWithError(e);
                     }
                 }
 
+                // 处理失败信息
                 @Override
                 public void onError(Throwable error) {
-                    log.error("流式处理失败", error);
+                    log.error("LLM 流式处理失败", error);
                     try {
+                        // 错误信息通过 SSE 响应返回给前端
                         Results<Void> err = Results.failed("500", "流式处理失败: " + error.getMessage());
                         emitter.send(SseEmitter.event()
                                 .name("error")
@@ -79,7 +104,7 @@ public class ChatController {
                 }
             });
         } catch (Exception e) {
-            log.error("流式处理失败", e);
+            log.error("chat 流式处理失败", e);
             try {
                 Results<Void> err = Results.failed("500", "流式处理失败: " + e.getMessage());
                 emitter.send(SseEmitter.event()

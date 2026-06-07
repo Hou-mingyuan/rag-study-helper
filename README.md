@@ -296,7 +296,7 @@ app:
   feishu:
     app-id: cli_xxx
     app-secret: xxx
-    wiki-id: 7327625190885801988
+    space-id: 7327625190885801988
     sync-enabled: true
     cron: 0 0 */12 * * ?
 ```
@@ -306,7 +306,7 @@ app:
 ```bash
 APP_FEISHU_APP_ID=cli_xxx
 APP_FEISHU_APP_SECRET=xxx
-APP_FEISHU_WIKI_ID=7327625190885801988
+APP_FEISHU_SPACE_ID=7327625190885801988
 APP_FEISHU_SYNC_ENABLED=true
 ```
 

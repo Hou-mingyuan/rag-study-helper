@@ -1,10 +1,7 @@
 package com.rag.studyhelper.config;
 
 import dev.langchain4j.data.segment.TextSegment;
-import dev.langchain4j.model.openai.OpenAiChatModel;
-import dev.langchain4j.model.openai.OpenAiEmbeddingModel;
-import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
-import dev.langchain4j.model.openai.OpenAiTokenizer;
+import dev.langchain4j.model.openai.*;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.chroma.ChromaEmbeddingStore;
 import dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore;
@@ -17,6 +14,9 @@ import org.springframework.context.annotation.Lazy;
 
 import java.time.Duration;
 
+/**
+ * LangChain4j 配置
+ */
 @Configuration
 public class LangChain4jConfig {
 
@@ -42,9 +42,9 @@ public class LangChain4jConfig {
     private String embeddingModelName;
 
     // ── InMemory (small / dev) ──
-
+    // 没有配置的时候默认使用 InMemory 但生产环境不建议用这个配置，可以删掉，开发环境可以自己玩
     @Bean
-    @ConditionalOnProperty(name = "vector.store.type", havingValue = "in-memory", matchIfMissing = false)
+    @ConditionalOnProperty(name = "vector.store.type", havingValue = "in-memory", matchIfMissing = true)
     public EmbeddingStore<TextSegment> inMemoryEmbeddingStore() {
         return new InMemoryEmbeddingStore<>();
     }
@@ -85,7 +85,7 @@ public class LangChain4jConfig {
     private Integer milvusDimension;
 
     @Bean
-    @ConditionalOnProperty(name = "vector.store.type", havingValue = "milvus", matchIfMissing = true)
+    @ConditionalOnProperty(name = "vector.store.type", havingValue = "milvus")
     @Lazy
     public MilvusEmbeddingStore milvusEmbeddingStore() {
         return MilvusEmbeddingStore.builder()
@@ -96,8 +96,7 @@ public class LangChain4jConfig {
                 .build();
     }
 
-    // ── LLM Models ──
-
+    // LLM模型选择（要选择适配 OpenAI API 的模型）
     @Bean
     public OpenAiChatModel chatModel() {
         return OpenAiChatModel.builder()
@@ -106,10 +105,12 @@ public class LangChain4jConfig {
                 .modelName(chatModelName)
                 .temperature(temperature)
                 .timeout(Duration.ofSeconds(60))
-                .tokenizer(new OpenAiTokenizer("gpt-3.5-turbo"))
+                // 本地的计数器，用来知道当前对话有多长，跟模型实际输出无关
+                .tokenizer(new OpenAiTokenizer(OpenAiChatModelName.GPT_3_5_TURBO))
                 .build();
     }
 
+    // LLM流式模型（要选择适配 OpenAI API 的模型）
     @Bean
     public OpenAiStreamingChatModel streamingChatModel() {
         return OpenAiStreamingChatModel.builder()
@@ -118,10 +119,11 @@ public class LangChain4jConfig {
                 .modelName(chatModelName)
                 .temperature(temperature)
                 .timeout(Duration.ofSeconds(60))
-                .tokenizer(new OpenAiTokenizer("gpt-3.5-turbo"))
+                .tokenizer(new OpenAiTokenizer(OpenAiChatModelName.GPT_3_5_TURBO))
                 .build();
     }
 
+    // 向量嵌入模型（要选择适配 OpenAI API 的模型）
     @Bean
     public OpenAiEmbeddingModel embeddingModel() {
         return OpenAiEmbeddingModel.builder()

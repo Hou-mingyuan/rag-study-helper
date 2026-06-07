@@ -10,6 +10,9 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.util.List;
 
+/**
+ * 文档管理控制器
+ */
 @RestController
 @RequestMapping("/api/documents")
 public class DocumentController {
@@ -17,6 +20,9 @@ public class DocumentController {
     @Autowired
     private DocumentIngestionService documentIngestionService;
 
+    /**
+     * 上传文件
+     */
     @PostMapping("/upload")
     public Results<DocumentInfo> upload(@RequestParam("file") MultipartFile file) {
         String originalName = file.getOriginalFilename();
@@ -37,6 +43,7 @@ public class DocumentController {
         return Results.success(documentIngestionService.getIngestedDocuments());
     }
 
+    // 扫描并导入文件
     @PostMapping("/scan")
     public Results<List<DocumentInfo>> scanDocuments() {
         return Results.success(documentIngestionService.scanAndIngest());

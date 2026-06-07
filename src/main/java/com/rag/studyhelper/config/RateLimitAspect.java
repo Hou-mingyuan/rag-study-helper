@@ -64,6 +64,7 @@ public class RateLimitAspect {
         return pjp.proceed();
     }
 
+    // 获取IP
     private String getClientIp(HttpServletRequest request) {
         String xff = request.getHeader("X-Forwarded-For");
         if (xff != null && !xff.isEmpty() && !"unknown".equalsIgnoreCase(xff)) {
@@ -72,6 +73,7 @@ public class RateLimitAspect {
         return request.getRemoteAddr();
     }
 
+    // 响应限流报错信息
     private void writeRateLimitResponse(HttpServletResponse response, String msg) throws Exception {
         response.setStatus(HttpServletResponse.SC_OK);
         response.setContentType("application/json;charset=UTF-8");

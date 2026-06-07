@@ -8,6 +8,7 @@ import dev.langchain4j.model.StreamingResponseHandler;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import dev.langchain4j.model.output.Response;
+import dev.langchain4j.model.output.TokenUsage;
 import dev.langchain4j.store.embedding.EmbeddingMatch;
 import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
 import dev.langchain4j.store.embedding.EmbeddingSearchResult;
@@ -48,18 +49,27 @@ public class RagQueryService {
     @Autowired
     private RerankService rerankService;
 
-    public void streamAnswer(String sessionId, String question, StreamingCallback callback) {
-        // 0. Load conversation history and rewrite query for retrieval
+    public void streamAnswer(String sessionId, String question, StreamingResponseHandler<AiMessage> callback) {
+        // 获取历史上下文
         List<ChatMessage> history = conversationStore.getHistory(sessionId);
-        String searchQuery = queryRewriteService.rewrite(question, history);
+        // 提问小于 5 个字，进行问题重写，为了使 RAG 检索更准确
+        // 比如 RAG 场景下 你通过 《如何学习JAVA》 这个文档去检索（如果不了解向量数据库和embedding就先别管，只看问题）
+        // 你第一次问："java 要学什么框架"
+        // embedding 根据 "java 要学什么框架" 转成向量去检索到了相应的内容再放进 prompt 喂给 LLM
+        // LLM 根据文档说："springboot"
+        // 你第二次问："他有什么好处"
+        // 我们可以一眼就看出这里的他指的是 springboot ，但是 embedding 模型不知道
+        // embedding 只是把你输入的 "他有什么好处" 转换成向量去向量数据库查询，所以查出来的根本就不是你想要的文档内容
+        // 这时 LLM 就不会根据文档去生成你想要的内容了
+        String searchQuery = queryRewriteService.rewrite(question, history, 5);
         if (!searchQuery.equals(question)) {
             log.info("Search query rewritten: \"{}\" → \"{}\"", question, searchQuery);
         }
 
-        // 1. Embed the rewritten query (for retrieval only)
+        // embedding（向量嵌入模型）根据你的问题转换成向量
         Embedding questionEmbedding = embeddingModel.embed(searchQuery).content();
 
-//        todo 查询 rag 过滤 仅 chroma 和 milvus 使用
+//        todo 查询 rag 过滤 仅 chroma 和 milvus 使用 这里只是轻量的学习架构没有，引入用户和权限表啥的，所以我只讲实现思路
 //        List<Long> accessibleDocIds = documentAccessService.getAccessibleDocIds(currentUserId);
 //
 //        // 构建过滤条件：公开的 OR 在我能看的私有文档列表里
@@ -69,17 +79,20 @@ public class RagQueryService {
 //                    MetadataFilterBuilder.metadataKey("document_id").isIn(accessibleDocIds)
 //            );
 //        }
+//        EmbeddingSearchRequest searchRequest = EmbeddingSearchRequest.builder()
+//                .queryEmbedding(questionEmbedding)
+//                .maxResults(20)
+//                .filter(filter)
+//                .build();
 
-        // 2. Search top 20, then filter by score threshold
+        // 查询 向量数据库 找出前 20 个最相似的向量
         EmbeddingSearchRequest searchRequest = EmbeddingSearchRequest.builder()
                 .queryEmbedding(questionEmbedding)
                 .maxResults(20)
-//                todo 查询 rag 过滤 仅 chroma 和 milvus 使用
-//                .filter(filter)
                 .build();
         EmbeddingSearchResult<TextSegment> searchResult = embeddingStore.search(searchRequest);
+        // 查出来的向量结果
         List<EmbeddingMatch<TextSegment>> matches = searchResult.matches();
-        log.info("Found {} matches total", matches.size());
 
         for (EmbeddingMatch<TextSegment> m : matches) {
             log.info("  score={} content={}", m.score(),
@@ -98,23 +111,24 @@ public class RagQueryService {
                     above90, above80, above70, below70);
         }
 
-        // 3. Filter by relevance score
+        // 设置一个阈值，低于这个阈值的向量被过滤掉
+        // 就是说你问 "java 是什么" 检索结果里是 "怎么做红烧肉" 这种跟 question 余弦相似度很低的 那么把这个检索丢给 LLM 有什么用呢
         double threshold = scoreThreshold;
         List<TextSegment> relevant = matches.stream()
                 .filter(m -> m.score() >= threshold)
                 .map(EmbeddingMatch::embedded)
                 .collect(Collectors.toList());
 
-        log.info("After filtering (score>={}): {} chunks", threshold, relevant.size());
+        log.info("After filtering question={} score>={} chunks={}", question, threshold, relevant.size());
 
-        // 3.5 Re-rank by SiliconFlow
+        // 检索召回 top 20，但真正有价值的可能只有其中 3-5 条，rerank 就是把最有用的排到最前面
+        // 通过 rerank 找到最相关的 5 条（这里的 5 可以自定义）
+        // 效果就是喂给 LLM 的上下文质量更高，回答更准，还省 token
         if (!relevant.isEmpty()) {
-            log.info("Before rerank: {} chunks", relevant.size());
-            relevant = rerankService.rerank(searchQuery, relevant);
-            log.info("After rerank: {} chunks", relevant.size());
+            relevant = rerankService.rerank(searchQuery, relevant, 5);
         }
 
-        // 4. Build prompt with optimized template (using original question for answer)
+        // 自定义 prompt 模板，如果检索结果为空，则使用普通对话模式
         String prompt;
         if (relevant.isEmpty()) {
             log.info("No relevant docs found, using normal chat mode");
@@ -140,19 +154,25 @@ public class RagQueryService {
                     + "## 问题\n" + question;
         }
 
-        // 5. Stream the answer via DeepSeek, then save conversation history
+        // 使用 langChain 调用适配 OpenAI API 的模型生成答案
         StringBuilder fullAnswer = new StringBuilder();
         streamingChatModel.generate(prompt, new StreamingResponseHandler<AiMessage>() {
             @Override
             public void onNext(String token) {
                 fullAnswer.append(token);
-                callback.onToken(token);
+                callback.onNext(token);
             }
 
             @Override
             public void onComplete(Response<AiMessage> response) {
+                TokenUsage usage = response.tokenUsage();
+                if (usage != null) {
+                    log.info("Token 用量 - 输入: {}, 输出: {}, 总和: {}",
+                            usage.inputTokenCount(), usage.outputTokenCount(), usage.totalTokenCount());
+                }
+                // 储存上下文
                 conversationStore.addTurn(sessionId, question, fullAnswer.toString());
-                callback.onComplete();
+                callback.onComplete(response);
             }
 
             @Override
@@ -160,13 +180,5 @@ public class RagQueryService {
                 callback.onError(error);
             }
         });
-    }
-
-    public interface StreamingCallback {
-        void onToken(String token);
-
-        void onComplete();
-
-        void onError(Throwable error);
     }
 }

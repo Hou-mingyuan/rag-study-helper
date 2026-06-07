@@ -21,7 +21,7 @@ app:
     chat-model-name: deepseek-v4-flash
     # Embedding API 密钥（可设为环境变量 APP_RAG_EMBEDDING_API_KEY）
     embedding-api-key:
-    # Embedding 模型地址
+    # Embedding 模型地址 （支持任意 OpenAI 兼容 API，选用硅基流动的模型）
     embedding-base-url: https://api.siliconflow.cn/v1
     # Embedding 模型名称
     embedding-model-name: BAAI/bge-large-zh-v1.5
@@ -31,11 +31,12 @@ app:
     rerank-base-url: https://api.siliconflow.cn/v1
     # Rerank 模型名称
     rerank-model-name: BAAI/bge-reranker-v2-m3
-    # 向量检索分数阈值（≥此值的文档会进入 Rerank 阶段，建议 0.75-0.85）
-    score-threshold: 0.80
-    document-scan-path: data/docs          # 启动时自动扫描的文档目录
+    # 向量检索分数阈值（≥此值的文档会进入 Rerank 阶段，建议 0.75-0.85），我写 0.77 是因为进过多次测试，效果比较好
+    score-threshold: 0.77
+    # 启动时自动扫描的文档目录
+    document-scan-path: data/docs
   # ===================================================================
-  #  限流配置（仅影响 /api/chat 接口）
+  #  限流配置（通过注解影响 接口，支持热更新）
   #  可通过环境变量覆盖，如 APP_RATE_LIMIT_IP_RATE=10
   # ===================================================================
   rate-limit:
@@ -47,13 +48,14 @@ app:
   feishu:
     app-id:                                # 可设为环境变量 APP_FEISHU_APP_ID
     app-secret:                            # 可设为环境变量 APP_FEISHU_APP_SECRET
-    wiki-id:                               # 可设为环境变量 APP_FEISHU_WIKI_ID
-    cron: 0 0 */12 * * ?
-    sync-enabled: false
+    space-id:                              # 可设为环境变量 APP_FEISHU_SPACE_ID
+    cron: 0 0 */12 * * ?                   # 定时任务执行时间 没半天跑一次（后续可改为xxl-job，这个项目只是供大家学习，没必要再加重框架结构了）
+    sync-enabled: false                    # 是否启用飞书文档同步功能
 
 # ===================================================================
 #  向量数据库配置（三选一）
 #  通过 vector.store.type 切换
+#  生产不要用 in-memory
 # ===================================================================
 vector:
   store:
@@ -78,17 +80,7 @@ milvus:
   dimension: 1024                         # 向量维度（需与 embedding 模型匹配） text-embedding-3-small:1536  BAAI/bge-large-zh-v1.5:1024
 
 # ===================================================================
-#  DeepSeek 对话模型（通过 OpenAI 兼容接口调用）
-#  ✅ DeepSeek 对话 API 正常
-#
-#  模型说明：
-#    deepseek-v4-pro    旗舰版，1.6T 总参/49B 激活，质量最高
-#    deepseek-v4-flash  快速版，284B 总参/13B 激活（推荐，兼顾速度与质量）
-#    deepseek-chat      ⚠ 2026-07-24 起废弃，当前映射到 v4-flash
-#
-#  推荐参数：
-#    temperature: 1.0  （DeepSeek 官方默认值）
-#    context: 1M tokens
+#  langchain4j配置
 # ===================================================================
 langchain4j:
   open-ai:
@@ -98,24 +90,20 @@ langchain4j:
       model-name: ${app.rag.chat-model-name}
       temperature: 1.0                    # DeepSeek 推荐值（0-2）
 
-# ===================================================================
-#  Embedding 模型（OpenAI 兼容接口）
-#  ⚠ DeepSeek 不提供 Embedding API！
-#  请将以下配置指向支持 Embedding 的服务：
-#
-#  推荐服务：
-#    SiliconFlow（免费额度）:
-#      base-url: https://api.siliconflow.cn/v1
-#      model: BAAI/bge-large-zh-v1.5
-#
-#    OpenAI:
-#      base-url: https://api.openai.com/v1
-#      model: text-embedding-3-small
-#
-#    DashScope（阿里云）:
-#      base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
-#      model: text-embedding-v1
-# ===================================================================
+    # ===================================================================
+    #  推荐服务：
+    #    SiliconFlow（免费额度）:
+    #      base-url: https://api.siliconflow.cn/v1
+    #      model: BAAI/bge-large-zh-v1.5
+    #
+    #    OpenAI:
+    #      base-url: https://api.openai.com/v1
+    #      model: text-embedding-3-small
+    #
+    #    DashScope（阿里云）:
+    #      base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    #      model: text-embedding-v1
+    # ===================================================================
     embedding-model:
       api-key: ${app.rag.embedding-api-key}
       base-url: ${app.rag.embedding-base-url}

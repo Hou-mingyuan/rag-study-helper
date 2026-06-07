@@ -5,6 +5,9 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;
 
+/**
+ * 聊天消息
+ */
 @Data
 @Accessors(chain = true)
 @AllArgsConstructor

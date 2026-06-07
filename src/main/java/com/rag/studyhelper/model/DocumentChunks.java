@@ -9,6 +9,9 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
+/**
+ * 向量分片信息 表
+ */
 @Data
 @TableName("document_chunks")
 public class DocumentChunks {

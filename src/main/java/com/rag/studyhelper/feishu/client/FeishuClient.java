@@ -12,7 +12,7 @@ import java.util.List;
 
 /**
  * 飞书开放平台 API 封装。
- * 纯 POJO，不依赖 Spring，便于单元测试。
+ * 通过 FeishuConfig 注册到 spring bean（如果 app.feishu.sync-enabled 参数不为 true 则不注入）
  */
 public class FeishuClient {
 
@@ -25,7 +25,9 @@ public class FeishuClient {
     private final OkHttpClient httpClient;
     private final ObjectMapper objectMapper;
 
+    // 缓存 token
     private String cachedToken;
+    // token 过期时间
     private long tokenExpireAt;
 
     public FeishuClient(String appId, String appSecret, String baseUrl, OkHttpClient httpClient) {
@@ -62,8 +64,12 @@ public class FeishuClient {
 
     /**
      * 获取所有知识库空间列表，用于查找 space_id。
+     * 后需要做权限升级可以从这里入手
+     *
+     * @return 知识库列表，每个元素包含 name、space_id 等字段
      */
-    public void listSpaces() throws IOException {
+    public List<JsonNode> listSpaces() throws IOException {
+        List<JsonNode> result = new ArrayList<>();
         String url = baseUrl + "/open-apis/wiki/v2/spaces?page_size=50";
         Request request = new Request.Builder()
                 .url(url)
@@ -74,14 +80,18 @@ public class FeishuClient {
             JsonNode body = objectMapper.readTree(resp.body().string());
             if (body.get("code").asInt() != 0) {
                 log.error("List spaces API error: {}", body);
-                return;
+                return result;
             }
             JsonNode items = body.path("data").path("items");
-            log.info("=== 可用知识库列表 ===");
+            log.info("=== 可用知识库列表（{} 个）===", items.size());
             for (JsonNode item : items) {
-                log.info("  name: {}, space_id: {}", item.path("name").asText(), item.path("space_id").asText());
+                String name = item.path("name").asText();
+                String spaceId = item.path("space_id").asText();
+                log.info("  name: {}, space_id: {}", name, spaceId);
+                result.add(item);
             }
         }
+        return result;
     }
 
     /**
