@@ -57,11 +57,18 @@ public class RateLimitService {
      * @return true 允许通过，false 触发限流
      */
     public boolean tryAcquire(String key, int permitsPerMin) {
+        return tryAcquire(key, permitsPerMin, 1, RateIntervalUnit.MINUTES, 24);
+    }
+
+
+    public boolean tryAcquire(String key, long permitsPerMin, long supplementTime, RateIntervalUnit supplementTimeUnit, long timeOutOfHours) {
         // 将配置值编码进 key，变更配置即自动切换限流器，旧 key 随 TTL 过期
-        RRateLimiter limiter = redissonClient.getRateLimiter("rl:" + key + ":" + permitsPerMin);
-        limiter.trySetRate(RateType.OVERALL, permitsPerMin, 1, RateIntervalUnit.MINUTES);
-        // 24h TTL，避免 key 永久残留 Redis
-        limiter.expire(Duration.ofHours(24));
+        RRateLimiter limiter = redissonClient.getRateLimiter("rl:" + key + ":" + permitsPerMin + ":" + supplementTime + ":" + supplementTimeUnit);
+        if (!limiter.isExists()) {
+            limiter.trySetRate(RateType.OVERALL, permitsPerMin, supplementTime, supplementTimeUnit);
+            // TTL
+            limiter.expire(Duration.ofHours(timeOutOfHours));
+        }
         return limiter.tryAcquire();
     }
 

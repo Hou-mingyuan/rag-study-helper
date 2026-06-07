@@ -1,14 +1,13 @@
 package com.rag.studyhelper.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.rag.studyhelper.config.RateLimit;
+import com.rag.studyhelper.config.IpRateLimit;
 import com.rag.studyhelper.model.ChatRequest;
 import com.rag.studyhelper.service.RagQueryService;
 import com.rag.studyhelper.utils.Results;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.model.StreamingResponseHandler;
 import dev.langchain4j.model.output.Response;
-import org.apache.poi.ss.formula.functions.T;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -52,7 +51,7 @@ public class ChatController {
      * 为了方便后续升级，我没有做手动的 Java 后端与 LLM 的请求中断交互
      * 只是让前端和java后端SSE断开连接
      */
-    @RateLimit
+    @IpRateLimit("chat")
     @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter chat(@RequestBody ChatRequest request) {
         // 与前端交互的 SSE 响应

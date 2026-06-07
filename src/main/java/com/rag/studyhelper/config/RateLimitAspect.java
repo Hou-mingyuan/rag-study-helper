@@ -6,6 +6,7 @@ import com.rag.studyhelper.utils.Results;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
+import org.redisson.api.RateIntervalUnit;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -39,23 +40,65 @@ public class RateLimitAspect {
     @Value("${app.rate-limit.daily-max:10000}")
     private int dailyMax;
 
-    @Around("@annotation(com.rag.studyhelper.config.RateLimit)")
-    public Object around(ProceedingJoinPoint pjp) throws Throwable {
+    /**
+     * 聊天接口限流
+     * 定制化 支持热更新
+     */
+    @Around("@annotation(ipRateLimit)")
+    public Object chatAround(ProceedingJoinPoint pjp, IpRateLimit ipRateLimit) throws Throwable {
         // 从当前请求上下文获取 request / response
         ServletRequestAttributes attrs = (ServletRequestAttributes)
                 RequestContextHolder.currentRequestAttributes();
         HttpServletRequest request = attrs.getRequest();
         HttpServletResponse response = attrs.getResponse();
 
+        String key = ipRateLimit.value();
+
         // 1. 全局每日限流
-        if (!rateLimitService.tryDaily("chat", dailyMax)) {
+        if (!rateLimitService.tryDaily(key, dailyMax)) {
             writeRateLimitResponse(response, "今日调用次数已达上限");
             return null;
         }
 
         // 2. IP 令牌桶限流
         String clientIp = getClientIp(request);
-        if (!rateLimitService.tryAcquire("ip:" + clientIp, ipRate)) {
+        if (!rateLimitService.tryAcquire("ip:" +  key + ":" + clientIp, ipRate)) {
+            writeRateLimitResponse(response, "请求过于频繁，请稍后再试");
+            return null;
+        }
+
+        // 通过限流，执行业务方法
+        return pjp.proceed();
+    }
+
+
+    /**
+     * 通用限流
+     */
+    @Around("@annotation(rateLimit)")
+    public Object commonAround(ProceedingJoinPoint pjp, RateLimit rateLimit) throws Throwable {
+        // 从当前请求上下文获取 response
+        ServletRequestAttributes attrs = (ServletRequestAttributes)
+                RequestContextHolder.currentRequestAttributes();
+        HttpServletResponse response = attrs.getResponse();
+
+        String key = rateLimit.key();
+        long count = rateLimit.count();
+        long supplementTime = rateLimit.supplementTime();
+        RateIntervalUnit rateIntervalUnit = rateLimit.supplementTimeUnit();
+        long timeOutOfHours = rateLimit.timeOutOfHours();
+        int dailyMaximumCount = rateLimit.dailyMaximumCount();
+
+        if (dailyMaximumCount != 0) {
+            // 全局每日限流
+            if (!rateLimitService.tryDaily(key, dailyMaximumCount)) {
+                writeRateLimitResponse(response, "今日调用次数已达上限");
+                return null;
+            }
+        }
+
+        // 令牌桶限流
+        if (!rateLimitService.tryAcquire(key, count, supplementTime, rateIntervalUnit, timeOutOfHours)) {
             writeRateLimitResponse(response, "请求过于频繁，请稍后再试");
             return null;
         }

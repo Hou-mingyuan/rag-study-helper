@@ -1,17 +1,47 @@
 package com.rag.studyhelper.config;
 
+import org.redisson.api.RateIntervalUnit;
+
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * 限流注解。
+ * 通用限流注解
  * <p>
  * aop 使用在注册了 spring bean 的类方法上，由 {@link RateLimitAspect} 拦截并执行限流。
- * 限流参数在 application.yml 中统一配置（app.rate-limit.*）。
  */
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
 public @interface RateLimit {
+    /**
+     * 限流 key
+     */
+    String key();
+
+    /**
+     * 令牌桶容量
+     */
+    long count();
+
+    /**
+     * 补充令牌的时间，默认 1 分钟补充 count 个令牌
+     */
+    long supplementTime() default 1L;
+
+    /**
+     * 时间间隔单位，默认分钟
+     */
+    RateIntervalUnit supplementTimeUnit() default RateIntervalUnit.MINUTES;
+
+    /**
+     * 每日最大调用次数，默认 0 表示不限制
+     */
+    int dailyMaximumCount() default 0;
+
+    /**
+     * 超时时间 单位，默认 24 小时
+     */
+    long timeOutOfHours() default 24L;
 }
