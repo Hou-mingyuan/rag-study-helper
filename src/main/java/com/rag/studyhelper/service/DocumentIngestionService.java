@@ -239,7 +239,7 @@ public class DocumentIngestionService {
                 prefix + textSegment.text()));
 
 //        todo 权限 rag 新增 仅 chroma 和 milvus 使用 如果是 私有文档，使用 .put("document_id", docRecord.getId())))
-//        加了 Metadata 后记得修改 DocumentSplitters.recursive 的 maxSegmentSize
+//        Metadata 的内容不会被送入 Embedding 模型，因此不消耗模型的 token 额度。
 //        segments.replaceAll(textSegment -> TextSegment.from(
 //                "[来源:" + fileName + "]\n" + textSegment.text(),
 //                new Metadata()
