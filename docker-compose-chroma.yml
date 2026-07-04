@@ -15,7 +15,7 @@ version: "3.8"
 #   APP_RAG_EMBEDDING_API_KEY=sk-siliconflow-xxx
 #   APP_FEISHU_APP_ID=cli_xxx
 #   APP_FEISHU_APP_SECRET=xxx
-#   APP_FEISHU_SPACE_ID=7327625190885801988
+#   APP_FEISHU_SPACE_ID=your-feishu-space-id
 
 services:
   chroma:

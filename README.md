@@ -85,6 +85,8 @@
 
 ---
 
+> 日常部署与操作步骤见 [USAGE.md](USAGE.md)。
+
 ## 快速开始
 
 ### 前置条件
@@ -296,7 +298,7 @@ app:
   feishu:
     app-id: cli_xxx
     app-secret: xxx
-    space-id: 7327625190885801988
+    space-id: your-feishu-space-id
     sync-enabled: true
     cron: 0 0 */12 * * ?
 ```
@@ -306,7 +308,7 @@ app:
 ```bash
 APP_FEISHU_APP_ID=cli_xxx
 APP_FEISHU_APP_SECRET=xxx
-APP_FEISHU_SPACE_ID=7327625190885801988
+APP_FEISHU_SPACE_ID=your-feishu-space-id
 APP_FEISHU_SYNC_ENABLED=true
 ```
 
