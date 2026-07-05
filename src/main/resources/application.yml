@@ -14,13 +14,13 @@ server:
 app:
   rag:
     # DeepSeek Chat API 密钥（可设为环境变量 APP_RAG_CHAT_API_KEY）
-    chat-api-key:
+    chat-api-key: ''
     # Chat 模型地址（支持任意 OpenAI 兼容 API）
     chat-base-url: https://api.deepseek.com
     # Chat 模型名称
     chat-model-name: deepseek-v4-flash
     # Embedding API 密钥（可设为环境变量 APP_RAG_EMBEDDING_API_KEY）
-    embedding-api-key:
+    embedding-api-key: ''
     # Embedding 模型地址 （支持任意 OpenAI 兼容 API，选用硅基流动的模型）
     embedding-base-url: https://api.siliconflow.cn/v1
     # Embedding 模型名称
@@ -46,10 +46,10 @@ app:
   #  飞书文档同步
   # ===================================================================
   feishu:
-    app-id:                                # 可设为环境变量 APP_FEISHU_APP_ID
-    app-secret:                            # 可设为环境变量 APP_FEISHU_APP_SECRET
-    space-id:                              # 可设为环境变量 APP_FEISHU_SPACE_ID
-    cron: 0 0 */12 * * ?                   # 定时任务执行时间 没半天跑一次（后续可改为xxl-job，这个项目只是供大家学习，没必要再加重框架结构了）
+    app-id: ''
+    app-secret: ''
+    space-id: ''
+    cron: "0 0 */12 * * ?"                   # 定时任务执行时间 没半天跑一次（后续可改为xxl-job，这个项目只是供大家学习，没必要再加重框架结构了）
     sync-enabled: false                    # 是否启用飞书文档同步功能
 
 # ===================================================================
@@ -126,7 +126,7 @@ spring:
   redis:
     host: localhost
     port: 6379
-    password:
+    password: ''
     timeout: 3000
     lettuce:
       pool:
@@ -140,7 +140,7 @@ spring:
   datasource:
     url: jdbc:mysql://localhost:3306/rag_study_helper?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
     username: root
-    password: ${SPRING_DATASOURCE_PASSWORD:${MYSQL_ROOT_PASSWORD:root}}
+    password: ${SPRING_DATASOURCE_PASSWORD:root}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       minimum-idle: 4

@@ -114,7 +114,9 @@ docker compose -f docker-compose-milvus.yml up -d
 # 3. 查看日志
 docker compose logs -f
 
-# 4. 访问 http://localhost:8080
+# 4. 验证健康状态并访问页面
+curl http://localhost:8080/api/health
+# 浏览器访问 http://localhost:8080
 ```
 
 Docker Compose 会同时启动以下服务：
@@ -161,6 +163,9 @@ cp .env.example .env
 | `APP_RATE_LIMIT_IP_RATE` | IP 令牌桶容量及补充速率（次/分钟） | 20 |
 | `APP_RATE_LIMIT_DAILY_MAX` | 全局每日调用上限 | 10000 |
 | `MYSQL_ROOT_PASSWORD` | MySQL 密码 | root |
+| `MYSQL_HOST_PORT` | 宿主机 MySQL 端口 | 3306 |
+| `REDIS_HOST_PORT` | 宿主机 Redis 端口 | 6379 |
+| `APP_HOST_PORT` | 宿主机应用端口 | 8080 |
 | `SPRING_REDIS_HOST` | Redis 地址 | redis |
 
 > `.env` 文件已加入 `.gitignore`，不会提交到代码仓库。
@@ -329,8 +334,6 @@ APP_FEISHU_SYNC_ENABLED=true
 
 **反向删除：** 同步时对比飞书远程节点列表，自动清理本地已不存在的文档及其向量数据。
 
-```
-
 ---
 
 ## API 参考
@@ -357,9 +360,10 @@ APP_FEISHU_SYNC_ENABLED=true
 
 | 接口 | 方法 | 请求格式 | 返回格式 | 说明 |
 |------|------|---------|---------|------|
+| `/api/health` | GET | — | `Results<Map<String,Object>>` | 运行态健康检查，返回服务状态、向量库类型、飞书同步状态 |
 | `/api/chat` | POST | `{"sessionId","question"}` | SSE `text/event-stream` | 流式问答，`event:error` 时数据为 `Results` 格式 |
 | `/api/documents/upload` | POST | `multipart/form-data` | `Results<DocumentInfo>` | 上传文档 |
-| `/api/documents` | GET | — | `Results<List<String>>` | 已入库文档列表 |
+| `/api/documents` | GET | — | `Results<List<DocumentInfo>>` | 已入库文档列表 |
 | `/api/documents/scan` | POST | — | `Results<List<DocumentInfo>>` | 扫描 `data/docs/` 目录 |
 | `/api/documents/{id}` | DELETE | — | `Results<Void>` | 删除文档及其向量数据 |
 
@@ -442,7 +446,8 @@ app:
 src/main/java/com/rag/studyhelper/
 ├── controller/
 │   ├── ChatController.java              # SSE 流式问答接口
-│   └── DocumentController.java          # 文档管理接口
+│   ├── DocumentController.java          # 文档管理接口
+│   └── HealthController.java            # 运行态健康检查接口
 ├── service/
 │   ├── RagQueryService.java             # RAG 核心流程编排
 │   ├── DocumentIngestionService.java    # 文档解析、去重、向量化与 MySQL 持久化
@@ -489,19 +494,8 @@ src/main/resources/
 ├── init.sql                             # MySQL DDL（首次启动自动执行）
 
 src/test/java/com/rag/studyhelper/
-├── config/
-│   ├── GlobalExceptionHandlerTest.java   # 异常处理单元测试
-│   └── ExceptionTestController.java      # 测试辅助 Controller
-├── controller/
-│   └── ChatControllerIntegrationTest.java
-├── service/
-│   ├── DocumentSplitterTest.java
-│   ├── RagQueryServiceTest.java
-│   └── RerankServiceTest.java
-├── feishu/
-│   ├── client/FeishuClientTest.java
-│   └── service/FeishuSyncServiceTest.java
-└── RagStudyHelperApplicationTests.java
+└── utils/
+    └── ResultsTest.java                 # 统一响应体单元测试
 ```
 
 ---
@@ -509,22 +503,24 @@ src/test/java/com/rag/studyhelper/
 ## 测试
 
 ```bash
-# 运行全部单元测试（排除集成测试）
+# 运行当前单元测试
 mvn test
 
-# 手动运行集成测试（调用真实 LLM，需配置 API Key）
-mvn test -Dtest=ChatControllerIntegrationTest
+# 打包验证（跳过测试）
+mvn package -DskipTests
 ```
 
 | 测试类 | 用例数 | 覆盖范围 |
 |--------|--------|---------|
-| `GlobalExceptionHandlerTest` | 3 | 400/404/500 全局异常处理 |
-| `RagQueryServiceTest` | 4 | RAG 流程编排、Rerank 调用、Prompt 组装 |
-| `RerankServiceTest` | 3 | SiliconFlow Rerank 调用与降级 |
-| `DocumentSplitterTest` | 2 | 文档分块逻辑 |
-| `FeishuClientTest` | 5 | 飞书 API 调用 |
-| `FeishuSyncServiceTest` | 6 | 增量同步、文档更新、反向删除 |
-| `ChatControllerIntegrationTest` | 1 | SSE 流式集成测试（手动运行）|
+| `ResultsTest` | 2 | 统一响应体成功/失败封装 |
+
+Docker Desktop 验证建议：
+
+```bash
+docker compose up -d --build
+curl http://localhost:8080/api/health
+curl http://localhost:8080/api/documents
+```
 
 ---
 

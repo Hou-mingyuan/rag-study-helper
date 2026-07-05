@@ -34,6 +34,14 @@ docker compose -f docker-compose-milvus.yml up -d
 docker compose logs -f app
 ```
 
+如果本机 3306、6379 或 8080 已被占用，可在 `.env` 中改宿主机端口：
+
+```bash
+MYSQL_HOST_PORT=13306
+REDIS_HOST_PORT=16379
+APP_HOST_PORT=18080
+```
+
 ## 3. 导入知识库
 
 | 方式 | 操作 |
@@ -51,6 +59,9 @@ docker compose logs -f app
 ## 5. 常用 API（curl）
 
 ```bash
+# 健康检查
+curl http://localhost:8080/api/health
+
 # 流式问答
 curl -N -X POST http://localhost:8080/api/chat \
   -H "Content-Type: application/json" \
@@ -102,6 +113,5 @@ vector:
 
 ```bash
 mvn test
-# 集成测试（需真实 API Key，默认 excluded）
-mvn test -Dtest=ChatControllerIntegrationTest
+mvn package -DskipTests
 ```

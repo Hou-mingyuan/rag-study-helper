@@ -13,6 +13,7 @@
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <spring-boot.version>2.6.13</spring-boot.version>
         <langchain4j.version>0.35.0</langchain4j.version>
+        <lombok.version>1.18.32</lombok.version>
     </properties>
 
     <!-- 绕过内网不可达的 Nexus 镜像，直连 Maven Central -->
@@ -143,6 +144,7 @@
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
+            <version>${lombok.version}</version>
         </dependency>
 
         <!-- Test: MockWebServer for HTTP mocking -->

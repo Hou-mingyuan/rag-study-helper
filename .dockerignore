@@ -1,0 +1,8 @@
+.git
+.env
+target/
+BOOT-INF/
+_docker-app.jar
+data/docs/
+*.tmp
+*.temp
