@@ -1,5 +1,12 @@
 # RAG Study Helper
 
+<p>
+  <img alt="CI" src="https://github.com/Hou-mingyuan/rag-study-helper/actions/workflows/ci.yml/badge.svg">
+  <img alt="java" src="https://img.shields.io/badge/Java-8-orange?logo=openjdk&logoColor=white">
+  <img alt="spring boot" src="https://img.shields.io/badge/Spring%20Boot-2.6-6DB33F?logo=springboot&logoColor=white">
+  <img alt="license" src="https://img.shields.io/badge/License-MIT-green">
+</p>
+
 基于 **Spring Boot 2.6 + LangChain4j 0.35** 构建的企业级 RAG（Retrieval-Augmented Generation）问答系统，支持多轮对话、多源文档知识库、语义检索重排序、飞书知识库自动同步，以及多实例水平扩展。
 
 > ⚠ **JDK 8 兼容说明：** LangChain4j 从 0.36.0 起要求 JDK 17，本项目使用最后支持 JDK 8 的 0.35.0。因此 Chroma 服务端锁定为 0.4.24（0.6.x+ API 不兼容），Milvus 使用 2.3.x。如需升级新版，需同时升级 JDK 17 + Spring Boot 3.x。
@@ -85,7 +92,25 @@
 
 ---
 
-> 日常部署与操作步骤见 [USAGE.md](USAGE.md)。
+> 日常部署与操作步骤见 [USAGE.md](USAGE.md)。生产与安全见 [DEPLOYMENT.md](DEPLOYMENT.md)、[SECURITY.md](SECURITY.md)；压测见 [PERFORMANCE_REPORT.md](PERFORMANCE_REPORT.md)。
+
+## 演示与核心流程（四要素）
+
+| 要素 | 说明 |
+| --- | --- |
+| **演示配置** | `.env` 中 `APP_RAG_CHAT_API_KEY` + `APP_RAG_EMBEDDING_API_KEY`；MySQL 默认 `root/root`，库 `rag_study_helper`（见 [DEPLOYMENT.md](DEPLOYMENT.md)） |
+| **演示会话** | Web UI 自动生成 `sessionId`；API 示例：`{"sessionId":"demo-1","question":"文档里提到了哪些核心概念？"}` |
+| **启动** | 独立：`docker compose up -d` → http://localhost:8080 ；Hub Profile：**http://localhost:18086** |
+| **入库** | Web 上传 / 扫描 `data/docs/` / 飞书同步（可选） |
+| **问答** | Web UI 或 `POST /api/chat` SSE 流式；`/api/health` smoke 验收 |
+
+Project Hub 一键启动（端口 **18086**）：
+
+```powershell
+cd ai-portfolio/docker
+docker compose -f docker-compose.profiles.yml --profile rag-study-helper up -d --build
+curl http://localhost:18086/api/health
+```
 
 ## 快速开始
 
@@ -492,6 +517,12 @@ src/main/resources/
 
 项目根目录/
 ├── init.sql                             # MySQL DDL（首次启动自动执行）
+├── DEPLOYMENT.md                        # 部署与 Hub Profile（18086）
+├── SECURITY.md                          # 安全与生产检查清单
+├── PERFORMANCE_REPORT.md                # 压测基线与 dry_run / k6
+├── loadtest/
+│   ├── dry_run.py                       # health + documents smoke（不调 LLM）
+│   └── k6_smoke.js                      # k6 可选 smoke
 
 src/test/java/com/rag/studyhelper/
 └── utils/
@@ -520,7 +551,10 @@ Docker Desktop 验证建议：
 docker compose up -d --build
 curl http://localhost:8080/api/health
 curl http://localhost:8080/api/documents
+python loadtest/dry_run.py --base-url http://localhost:8080
 ```
+
+Hub Profile 验证见 [DEPLOYMENT.md](DEPLOYMENT.md)（`:18086`）。
 
 ---
 
