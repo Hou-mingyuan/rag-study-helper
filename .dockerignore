@@ -1,8 +1,9 @@
-.git
-.env
 target/
 BOOT-INF/
 _docker-app.jar
-data/docs/
-*.tmp
-*.temp
+.git/
+.idea/
+*.iml
+.env
+**/.pytest_cache/
+**/node_modules/

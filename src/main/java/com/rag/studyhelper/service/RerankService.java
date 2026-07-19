@@ -2,10 +2,13 @@ package com.rag.studyhelper.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.rag.studyhelper.config.RagProviderResolver;
+import com.rag.studyhelper.mock.MockEmbeddingModel;
 import dev.langchain4j.data.segment.TextSegment;
 import okhttp3.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -48,6 +51,9 @@ public class RerankService {
                 .build();
     }
 
+    @Autowired
+    private RagProviderResolver ragProviderResolver;
+
     /**
      * 重排序
      * 就是把你查的内容和从向量数据库得到的文档分片对比，把最先关的文档排前面
@@ -55,6 +61,10 @@ public class RerankService {
     public List<TextSegment> rerank(String query, List<TextSegment> documents, int topN) {
         if (documents.isEmpty()) {
             return documents;
+        }
+
+        if (ragProviderResolver.isMockMode()) {
+            return mockRerank(query, documents, topN);
         }
 
         Map<String, Object> requestBody = new HashMap<>();
@@ -88,6 +98,27 @@ public class RerankService {
         }
 
         return documents;
+    }
+
+    private List<TextSegment> mockRerank(String query, List<TextSegment> documents, int topN) {
+        List<String> queryTokens = MockEmbeddingModel.tokenize(query);
+        return documents.stream()
+                .sorted((a, b) -> Integer.compare(
+                        overlapScore(queryTokens, b.text()),
+                        overlapScore(queryTokens, a.text())))
+                .limit(topN)
+                .collect(Collectors.toList());
+    }
+
+    private static int overlapScore(List<String> queryTokens, String document) {
+        List<String> docTokens = MockEmbeddingModel.tokenize(document);
+        int score = 0;
+        for (String token : queryTokens) {
+            if (docTokens.contains(token)) {
+                score += 1;
+            }
+        }
+        return score;
     }
 
     /**

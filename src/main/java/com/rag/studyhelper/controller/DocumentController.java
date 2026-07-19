@@ -1,6 +1,7 @@
 package com.rag.studyhelper.controller;
 
 import com.rag.studyhelper.config.RateLimit;
+import com.rag.studyhelper.model.ChunkPreview;
 import com.rag.studyhelper.model.DocumentInfo;
 import com.rag.studyhelper.service.DocumentIngestionService;
 import com.rag.studyhelper.utils.Results;
@@ -44,6 +45,13 @@ public class DocumentController {
     @GetMapping
     public Results<List<DocumentInfo>> listDocuments() {
         return Results.success(documentIngestionService.getIngestedDocuments());
+    }
+
+    @GetMapping("/{id}/chunks")
+    public Results<List<ChunkPreview>> listChunks(
+            @PathVariable Long id,
+            @RequestParam(value = "limit", defaultValue = "12") int limit) {
+        return Results.success(documentIngestionService.listChunkPreviews(id, limit));
     }
 
     // 扫描并导入文件

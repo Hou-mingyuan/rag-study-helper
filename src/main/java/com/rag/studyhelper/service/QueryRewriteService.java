@@ -1,12 +1,14 @@
 package com.rag.studyhelper.service;
 
 import com.rag.studyhelper.model.ChatMessage;
-import dev.langchain4j.model.openai.OpenAiChatModel;
+import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.model.chat.ChatLanguageModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -19,7 +21,7 @@ public class QueryRewriteService {
     private static final Logger log = LoggerFactory.getLogger(QueryRewriteService.class);
 
     @Autowired
-    private OpenAiChatModel chatModel;
+    private ChatLanguageModel chatModel;
 
     /**
      * 改写逻辑
@@ -33,7 +35,8 @@ public class QueryRewriteService {
         log.info("rewrite question with {} rounds of history", history.size() / 2);
 
         String prompt = buildRewritePrompt(originalQuestion, history);
-        String rewritten = chatModel.generate(prompt).trim();
+        String rewritten = chatModel.generate(Collections.singletonList(UserMessage.from(prompt)))
+                .content().text().trim();
 
         log.info("rewrite question : \"{}\" → \"{}\"", originalQuestion, rewritten);
         return rewritten;

@@ -98,18 +98,37 @@
 
 | 要素 | 说明 |
 | --- | --- |
-| **演示配置** | `.env` 中 `APP_RAG_CHAT_API_KEY` + `APP_RAG_EMBEDDING_API_KEY`；MySQL 默认 `root/root`，库 `rag_study_helper`（见 [DEPLOYMENT.md](DEPLOYMENT.md)） |
-| **演示会话** | Web UI 自动生成 `sessionId`；API 示例：`{"sessionId":"demo-1","question":"文档里提到了哪些核心概念？"}` |
-| **启动** | 独立：`docker compose up -d` → http://localhost:8080 ；Hub Profile：**http://localhost:18086** |
-| **入库** | Web 上传 / 扫描 `data/docs/` / 飞书同步（可选） |
-| **问答** | Web UI 或 `POST /api/chat` SSE 流式；`/api/health` smoke 验收 |
+| **零密钥 Mock** | `.env` 设 `APP_RAG_PROVIDER=mock`（默认），Key 可留空；内置 `data/docs/` 演示文档自动入库 |
+| **演示会话** | Web UI 自动生成 `sessionId`；推荐首问：「RAG 中的向量检索是怎么工作的？」 |
+| **启动** | `./scripts/demo-mock.ps1` 或 `docker compose up -d` → http://localhost:8080 ；Hub：**18086** |
+| **入库** | 启动扫描 `data/docs/` · Web 上传 · 飞书同步（可选） |
+| **问答** | SSE `POST /api/chat` · smoke：`node scripts/smoke-mock-demo.mjs` |
+
+完整演示路线见 **[docs/DEMO.md](docs/DEMO.md)**。
+
+**零密钥一键演示：**
+
+```powershell
+.\scripts\demo-mock.ps1
+```
+
+```bash
+./scripts/demo-mock.sh
+```
 
 Project Hub 一键启动（端口 **18086**）：
 
 ```powershell
 cd ai-portfolio/docker
 docker compose -f docker-compose.profiles.yml --profile rag-study-helper up -d --build
-curl http://localhost:18086/api/health
+node ../../rag-study-helper/scripts/smoke-mock-demo.mjs http://localhost:18086
+```
+
+**ChatBI + RAG 联动 Mock 演示（作品集推荐）**：
+
+```powershell
+cd ai-portfolio/docker
+.\demo-chatbi-rag-mock.ps1
 ```
 
 ## 快速开始
@@ -117,7 +136,8 @@ curl http://localhost:18086/api/health
 ### 前置条件
 
 - Docker（推荐）或 JDK 8+（本地运行）
-- API Key：Chat 模型 + Embedding 模型的密钥
+- **Mock 演示**：无需 API Key（`APP_RAG_PROVIDER=mock`，见 [docs/DEMO.md](docs/DEMO.md)）
+- **真实 LLM**：Chat + Embedding 两套 API Key
 
 > 默认使用 DeepSeek 作为对话模型、SiliconFlow 作为 Embedding/Rerank 服务商。
 > 可通过环境变量切换任意 OpenAI 兼容 API，参考 [LLM 配置](#llm-配置)。
@@ -148,10 +168,23 @@ Docker Compose 会同时启动以下服务：
 
 | 服务 | 镜像 | 说明 |
 |------|------|------|
-| app | 本地构建 | Spring Boot 应用，端口 8080 |
+| app | 本地构建（**Alpine JRE 运行时**） | Spring Boot 应用，端口 8080 |
 | mysql | mysql:8.0 | 文档元数据存储，首次启动自动建表 |
 | redis | redis:7-alpine | 多实例对话上下文共享 |
 | chroma / milvus | — | 向量数据库（按所选 compose 文件） |
+
+**Docker 镜像体积（实测 · 2026-07-06）**
+
+| 项 | 优化前 | 优化后 |
+| --- | --- | --- |
+| 运行时基座 | `eclipse-temurin:8-jre-jammy` | **`eclipse-temurin:8-jre-alpine`** |
+| 构建 | 单独 `dependency:go-offline`（耗时长） | **单次 `mvn package`** + 扩展 `.dockerignore` |
+| 应用 JAR | ~189 MB（fat jar） | ~189 MB |
+| 镜像 `docker images` | ~650 MB 量级（jammy 栈） | **~581 MB**（`rag-study-helper:slim-test`） |
+
+构建阶段仍用 Maven JDK 镜像（不进最终运行时）。镜像层缓存命中后 `docker compose up -d --build` 明显快于全量 `go-offline`。
+
+**分块预览 UX**：知识库文档列表点击条目 → 右侧 **分块预览** 面板（加载更多 / 展开 / 复制单块文本），对接 `GET /api/documents/{id}/chunks`。
 
 ### 本地 Maven 运行
 
@@ -576,6 +609,19 @@ Hub Profile 验证见 [DEPLOYMENT.md](DEPLOYMENT.md)（`:18086`）。
 | 统一响应 | `Results<T>` + `GlobalExceptionHandler` | 所有同步 API 返回 `resCode/msg/obj` 格式，SSE 错误走 `event:error` 通道 |
 | 限流 | `@RateLimit` + AOP + Redisson `RRateLimiter` | 分布式令牌桶，多实例共享；注解式声明，无 Redis 时自动降级 |
 | 分布式工具 | Redisson 3.24.3 | 限流令牌桶，低配连接池避免资源竞争 |
+
+---
+
+## 💬 面试 3 问 3 答
+
+**Q1：RAG 链路里为什么要「查询改写 → 向量召回 → Rerank」，而不是只调一次 Embedding？**
+A：用户原问往往口语化、缺主语或与文档表述不一致；**QueryRewrite** 先对齐检索 query。向量召回保证语义覆盖，**BGE Rerank** 用交叉编码器精排 top-k，减少噪声 chunk 进 Prompt。Mock 模式下三步仍真实执行，只是模型返回可预测响应。
+
+**Q2：Mock 零密钥模式能证明什么，不能证明什么？**
+A：能证明 **编排、入库、检索注入、SSE 流式、引用片段展示** 的工程闭环，适合作品集与 CI（`demo-mock.ps1` + `smoke-mock-demo.mjs`）。不能替代真实 Embedding/LLM 的语义质量评估；切 `APP_RAG_PROVIDER=openai` 并填 Key 即可同 UI 对比效果。
+
+**Q3：文档学习场景里，如何降低「一本正经胡说」？**
+A：(1) 检索阈值 + Rerank 控制进 Prompt 的片段质量；(2) Prompt 约束「仅依据参考文档」，SSE 回答附带 **参考文档块**；(3) 前端展示命中来源，用户可核对原文。关键业务仍建议人工复核 + 审计。与 **ChatBI Copilot** 对比：问数走 Text2SQL + 只读护栏，文档学习走 RAG 检索；Hub 一键联动见 `ai-portfolio/docker/demo-chatbi-rag-mock.ps1`。
 
 ---
 

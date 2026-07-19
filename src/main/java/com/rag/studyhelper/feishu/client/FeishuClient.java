@@ -130,18 +130,7 @@ public class FeishuClient {
                 }
 
                 JsonNode items = body.path("data").path("items");
-                for (JsonNode item : items) {
-                    WikiNode node = new WikiNode();
-                    node.setNodeToken(item.path("node_token").asText());
-                    node.setObjToken(item.path("obj_token").asText());
-                    node.setObjType(item.path("obj_type").asText());
-                    node.setNodeTitle(item.path("title").asText());
-                    node.setParentNodeToken(parentNodeToken);
-                    node.setHasChild(item.path("has_child").asBoolean(false));
-                    String editTime = item.path("obj_edit_time").asText();
-                    node.setUpdateTime(Long.parseLong(editTime.isEmpty() ? "0" : editTime));
-                    currentLevelNodes.add(node);
-                }
+                currentLevelNodes.addAll(FeishuWikiSupport.parseWikiItems(items, parentNodeToken));
 
                 pageToken = body.path("data").path("page_token").asText(null);
             }

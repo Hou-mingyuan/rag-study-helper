@@ -60,6 +60,14 @@ jobs:
           curl -sf http://localhost:8080/api/health
           curl -sf http://localhost:8080/api/documents
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Mock demo smoke (scripts/smoke-mock-demo.mjs)
+        run: node scripts/smoke-mock-demo.mjs http://localhost:8080
+
       - name: Tear down
         if: always()
         run: docker compose down -v

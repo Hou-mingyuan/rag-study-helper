@@ -5,12 +5,12 @@
 ## 1. 准备环境
 
 - Docker Desktop（推荐），或 JDK 8+ + 本地 MySQL 8 + Redis 7
-- 至少一个 **Chat** API Key（OpenAI 兼容，默认 DeepSeek）
-- 一个 **Embedding** API Key（默认 SiliconFlow `BAAI/bge-large-zh-v1.5`）
+- **Mock 零密钥演示**（推荐作品集）：`APP_RAG_PROVIDER=mock`，Key 可留空 — 见 [docs/DEMO.md](docs/DEMO.md)
+- **真实 LLM**：Chat + Embedding 两套 API Key
 
 ```bash
 cp .env.example .env
-# 编辑 .env，填入 APP_RAG_CHAT_API_KEY、APP_RAG_EMBEDDING_API_KEY
+# Mock：默认即可；真实 LLM：填入 APP_RAG_CHAT_API_KEY、APP_RAG_EMBEDDING_API_KEY
 ```
 
 > 切勿提交含真实密钥的 `.env` 文件。

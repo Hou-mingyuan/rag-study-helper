@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.rag.studyhelper.mapper.DocumentChunksMapper;
 import com.rag.studyhelper.mapper.DocumentsMapper;
 import com.rag.studyhelper.model.DocumentChunks;
+import com.rag.studyhelper.model.ChunkPreview;
 import com.rag.studyhelper.model.DocumentInfo;
 import com.rag.studyhelper.model.Documents;
 import dev.langchain4j.data.document.Document;
@@ -434,6 +435,30 @@ public class DocumentIngestionService {
             result.add(new DocumentInfo(doc.getId(), doc.getDocumentName(), doc.getChunkCount()));
         }
         return result;
+    }
+
+    /**
+     * 分块预览（学习流程：上传后查看切分效果）
+     */
+    public List<ChunkPreview> listChunkPreviews(Long documentId, int limit) {
+        int capped = Math.min(Math.max(limit, 1), 30);
+        List<DocumentChunks> chunks = documentChunksMapper.selectList(
+                Wrappers.<DocumentChunks>lambdaQuery()
+                        .eq(DocumentChunks::getDocumentId, documentId)
+                        .orderByAsc(DocumentChunks::getChunkIndex)
+                        .last("LIMIT " + capped)
+        );
+        List<ChunkPreview> previews = new ArrayList<>(chunks.size());
+        for (DocumentChunks chunk : chunks) {
+            String text = chunk.getChunkText() != null ? chunk.getChunkText() : "";
+            int charCount = text.length();
+            String preview = charCount > 420 ? text.substring(0, 420) + "…" : text;
+            previews.add(new ChunkPreview(
+                    chunk.getChunkIndex() != null ? chunk.getChunkIndex() : previews.size(),
+                    preview,
+                    charCount));
+        }
+        return previews;
     }
 
     /**

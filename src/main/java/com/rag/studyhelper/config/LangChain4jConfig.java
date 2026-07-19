@@ -1,7 +1,16 @@
 package com.rag.studyhelper.config;
 
+import com.rag.studyhelper.mock.MockChatModels;
+import com.rag.studyhelper.mock.MockEmbeddingModel;
 import dev.langchain4j.data.segment.TextSegment;
-import dev.langchain4j.model.openai.*;
+import dev.langchain4j.model.chat.ChatLanguageModel;
+import dev.langchain4j.model.chat.StreamingChatLanguageModel;
+import dev.langchain4j.model.embedding.EmbeddingModel;
+import dev.langchain4j.model.openai.OpenAiChatModel;
+import dev.langchain4j.model.openai.OpenAiChatModelName;
+import dev.langchain4j.model.openai.OpenAiEmbeddingModel;
+import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
+import dev.langchain4j.model.openai.OpenAiTokenizer;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.chroma.ChromaEmbeddingStore;
 import dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore;
@@ -15,7 +24,7 @@ import org.springframework.context.annotation.Lazy;
 import java.time.Duration;
 
 /**
- * LangChain4j 配置
+ * LangChain4j 配置 — openai 或 mock（零密钥演示）
  */
 @Configuration
 public class LangChain4jConfig {
@@ -41,15 +50,11 @@ public class LangChain4jConfig {
     @Value("${langchain4j.open-ai.embedding-model.model-name}")
     private String embeddingModelName;
 
-    // ── InMemory (small / dev) ──
-    // 没有配置的时候默认使用 InMemory 但生产环境不建议用这个配置，可以删掉，开发环境可以自己玩
     @Bean
     @ConditionalOnProperty(name = "vector.store.type", havingValue = "in-memory", matchIfMissing = true)
     public EmbeddingStore<TextSegment> inMemoryEmbeddingStore() {
         return new InMemoryEmbeddingStore<>();
     }
-
-    // ── Chroma (medium) ──
 
     @Value("${chroma.host:localhost}")
     private String chromaHost;
@@ -69,8 +74,6 @@ public class LangChain4jConfig {
                 .collectionName(chromaCollectionName)
                 .build();
     }
-
-    // ── Milvus (large / production) ──
 
     @Value("${milvus.host:localhost}")
     private String milvusHost;
@@ -96,23 +99,26 @@ public class LangChain4jConfig {
                 .build();
     }
 
-    // LLM模型选择（要选择适配 OpenAI API 的模型）
     @Bean
-    public OpenAiChatModel chatModel() {
+    public ChatLanguageModel chatLanguageModel(RagProviderResolver provider) {
+        if (provider.isMockMode()) {
+            return MockChatModels.chatLanguageModel();
+        }
         return OpenAiChatModel.builder()
                 .apiKey(chatApiKey)
                 .baseUrl(chatBaseUrl)
                 .modelName(chatModelName)
                 .temperature(temperature)
                 .timeout(Duration.ofSeconds(60))
-                // 本地的计数器，用来知道当前对话有多长，跟模型实际输出无关
                 .tokenizer(new OpenAiTokenizer(OpenAiChatModelName.GPT_3_5_TURBO))
                 .build();
     }
 
-    // LLM流式模型（要选择适配 OpenAI API 的模型）
     @Bean
-    public OpenAiStreamingChatModel streamingChatModel() {
+    public StreamingChatLanguageModel streamingChatLanguageModel(RagProviderResolver provider) {
+        if (provider.isMockMode()) {
+            return MockChatModels.streamingChatLanguageModel();
+        }
         return OpenAiStreamingChatModel.builder()
                 .apiKey(chatApiKey)
                 .baseUrl(chatBaseUrl)
@@ -123,9 +129,11 @@ public class LangChain4jConfig {
                 .build();
     }
 
-    // 向量嵌入模型（要选择适配 OpenAI API 的模型）
     @Bean
-    public OpenAiEmbeddingModel embeddingModel() {
+    public EmbeddingModel embeddingModel(RagProviderResolver provider) {
+        if (provider.isMockMode()) {
+            return new MockEmbeddingModel();
+        }
         return OpenAiEmbeddingModel.builder()
                 .apiKey(embeddingApiKey)
                 .baseUrl(embeddingBaseUrl)

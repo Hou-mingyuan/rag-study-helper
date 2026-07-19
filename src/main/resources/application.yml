@@ -13,6 +13,8 @@ server:
 # ===================================================================
 app:
   rag:
+    # 模型供应方：auto（无 Key 时 mock）| mock | openai
+    provider: ${APP_RAG_PROVIDER:auto}
     # DeepSeek Chat API 密钥（可设为环境变量 APP_RAG_CHAT_API_KEY）
     chat-api-key: ''
     # Chat 模型地址（支持任意 OpenAI 兼容 API）
@@ -42,6 +44,11 @@ app:
   rate-limit:
     ip-rate: 20                            # IP 令牌桶容量及补充速率（次/分钟）
     daily-max: 10000                       # 全局每日调用上限
+  # 应用层 API Key（首期 · 生产建议开启）
+  api-key:
+    enabled: ${APP_API_KEY_ENABLED:false}
+    header: X-API-Key
+    value: ${APP_API_KEY:}
   # ===================================================================
   #  飞书文档同步
   # ===================================================================

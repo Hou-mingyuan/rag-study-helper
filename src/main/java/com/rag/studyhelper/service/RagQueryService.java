@@ -1,12 +1,15 @@
 package com.rag.studyhelper.service;
 
+import com.rag.studyhelper.config.RagProviderResolver;
 import com.rag.studyhelper.model.ChatMessage;
+import com.rag.studyhelper.model.RetrievalSnippet;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.StreamingResponseHandler;
 import dev.langchain4j.model.embedding.EmbeddingModel;
-import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
+import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.model.chat.StreamingChatLanguageModel;
 import dev.langchain4j.model.output.Response;
 import dev.langchain4j.model.output.TokenUsage;
 import dev.langchain4j.store.embedding.EmbeddingMatch;
@@ -19,8 +22,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.DoubleSummaryStatistics;
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 @Service
@@ -35,7 +41,10 @@ public class RagQueryService {
     private QueryRewriteService queryRewriteService;
 
     @Autowired
-    private OpenAiStreamingChatModel streamingChatModel;
+    private RagProviderResolver ragProviderResolver;
+
+    @Autowired
+    private StreamingChatLanguageModel streamingChatModel;
 
     @Autowired
     private EmbeddingModel embeddingModel;
@@ -50,6 +59,11 @@ public class RagQueryService {
     private RerankService rerankService;
 
     public void streamAnswer(String sessionId, String question, StreamingResponseHandler<AiMessage> callback) {
+        streamAnswer(sessionId, question, null, callback);
+    }
+
+    public void streamAnswer(String sessionId, String question, Consumer<List<RetrievalSnippet>> onRetrieval,
+                             StreamingResponseHandler<AiMessage> callback) {
         // 获取历史上下文
         List<ChatMessage> history = conversationStore.getHistory(sessionId);
         // 提问小于 5 个字，进行问题重写，为了使 RAG 检索更准确
@@ -113,7 +127,7 @@ public class RagQueryService {
 
         // 设置一个阈值，低于这个阈值的向量被过滤掉
         // 就是说你问 "java 是什么" 检索结果里是 "怎么做红烧肉" 这种跟 question 余弦相似度很低的 那么把这个检索丢给 LLM 有什么用呢
-        double threshold = scoreThreshold;
+        double threshold = ragProviderResolver.isMockMode() ? 0.12 : scoreThreshold;
         List<TextSegment> relevant = matches.stream()
                 .filter(m -> m.score() >= threshold)
                 .map(EmbeddingMatch::embedded)
@@ -126,6 +140,14 @@ public class RagQueryService {
         // 效果就是喂给 LLM 的上下文质量更高，回答更准，还省 token
         if (!relevant.isEmpty()) {
             relevant = rerankService.rerank(searchQuery, relevant, 5);
+        }
+
+        if (onRetrieval != null && !relevant.isEmpty()) {
+            List<RetrievalSnippet> snippets = new ArrayList<>(relevant.size());
+            for (TextSegment segment : relevant) {
+                snippets.add(toRetrievalSnippet(segment));
+            }
+            onRetrieval.accept(snippets);
         }
 
         // 自定义 prompt 模板，如果检索结果为空，则使用普通对话模式
@@ -156,7 +178,7 @@ public class RagQueryService {
 
         // 使用 langChain 调用适配 OpenAI API 的模型生成答案
         StringBuilder fullAnswer = new StringBuilder();
-        streamingChatModel.generate(prompt, new StreamingResponseHandler<AiMessage>() {
+        streamingChatModel.generate(Collections.singletonList(UserMessage.from(prompt)), new StreamingResponseHandler<AiMessage>() {
             @Override
             public void onNext(String token) {
                 fullAnswer.append(token);
@@ -180,5 +202,35 @@ public class RagQueryService {
                 callback.onError(error);
             }
         });
+    }
+
+    static RetrievalSnippet toRetrievalSnippet(TextSegment segment) {
+        String raw = segment.text();
+        String documentName = extractSourceName(raw);
+        String preview = stripSourcePrefix(raw);
+        if (preview.length() > 320) {
+            preview = preview.substring(0, 320) + "…";
+        }
+        return new RetrievalSnippet(documentName, preview);
+    }
+
+    static String extractSourceName(String text) {
+        if (text != null && text.startsWith("[来源:")) {
+            int end = text.indexOf(']');
+            if (end > 4) {
+                return text.substring(4, end);
+            }
+        }
+        return "参考文档";
+    }
+
+    static String stripSourcePrefix(String text) {
+        if (text != null && text.startsWith("[来源:")) {
+            int newline = text.indexOf('\n');
+            if (newline >= 0 && newline + 1 < text.length()) {
+                return text.substring(newline + 1).trim();
+            }
+        }
+        return text != null ? text.trim() : "";
     }
 }

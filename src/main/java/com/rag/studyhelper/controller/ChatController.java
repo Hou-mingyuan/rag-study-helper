@@ -3,6 +3,7 @@ package com.rag.studyhelper.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rag.studyhelper.config.IpRateLimit;
 import com.rag.studyhelper.model.ChatRequest;
+import com.rag.studyhelper.model.RetrievalSnippet;
 import com.rag.studyhelper.service.RagQueryService;
 import com.rag.studyhelper.utils.Results;
 import dev.langchain4j.data.message.AiMessage;
@@ -58,7 +59,20 @@ public class ChatController {
         SseEmitter emitter = new SseEmitter(60_000L);
 
         try {
-            ragQueryService.streamAnswer(request.getSessionId(), request.getQuestion(), new StreamingResponseHandler<AiMessage>() {
+            ragQueryService.streamAnswer(request.getSessionId(), request.getQuestion(), snippets -> {
+                if (snippets == null || snippets.isEmpty()) {
+                    return;
+                }
+                try {
+                    Map<String, Object> data = new HashMap<>();
+                    data.put("snippets", snippets);
+                    emitter.send(SseEmitter.event()
+                            .name("retrieval")
+                            .data(OBJECT_MAPPER.writeValueAsString(data)));
+                } catch (IOException e) {
+                    emitter.completeWithError(e);
+                }
+            }, new StreamingResponseHandler<AiMessage>() {
                 // 处理 LLM 返回的分词结果
                 @Override
                 public void onNext(String token) {

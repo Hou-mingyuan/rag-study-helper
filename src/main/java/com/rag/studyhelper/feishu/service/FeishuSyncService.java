@@ -2,6 +2,7 @@ package com.rag.studyhelper.feishu.service;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.rag.studyhelper.feishu.client.FeishuClient;
+import com.rag.studyhelper.feishu.client.FeishuWikiSupport;
 import com.rag.studyhelper.feishu.client.WikiNode;
 import com.rag.studyhelper.mapper.DocumentChunksMapper;
 import com.rag.studyhelper.mapper.DocumentsMapper;
@@ -75,8 +76,7 @@ public class FeishuSyncService {
                         Wrappers.<Documents>lambdaQuery()
                                 .eq(Documents::getFeishuNodeToken, nodeToken)
                 );
-                if (doc != null && doc.getFeishuUpdateTime() != null
-                        && doc.getFeishuUpdateTime() == updateTime) {
+                if (doc != null && FeishuWikiSupport.shouldSkipSync(doc.getFeishuUpdateTime(), updateTime)) {
                     skipped++;
                     continue;
                 }

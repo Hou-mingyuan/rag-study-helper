@@ -55,7 +55,9 @@ k6 run loadtest/k6_smoke.js -e BASE_URL=http://localhost:18086
 | 日期 | 环境 | BASE | health p95 | documents p95 | 备注 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-07-06 | 独立 Compose（InMemory） | `:18090` | **26 ms** | **30 ms** | `python loadtest/dry_run.py --base-url http://localhost:18090` **PASSED**（12 迭代，并发 3） |
-| — | Hub Profile | `:18086` | — | — | 见 [ai-portfolio/docker/verify/rag-study-helper.md](../ai-portfolio/docker/verify/rag-study-helper.md) |
+| 2026-07-06 | Mock 栈（project-hub-1 复验） | `:8082` | **86 ms** | **212 ms** | `dry_run.py` 12 iter · 3 并发 · **PASSED** · `ragProvider=mock` |
+| 2026-07-06 | Hub Profile（规范端口） | `:18086` | **30 ms** | **56 ms** | `dry_run.py` 12 iter · 2 并发 · **PASSED** · project-hub-1（容器 healthy 后探活；verify-all remediation **1/1 OK**） |
+| 2026-07-06 | Hub Profile（规范端口） | `:18086` | **32 ms** | **47 ms** | `dry_run.py` 12 iter · **PASSED** · project-hub-2 终验复跑 |
 
 ## 限制
 

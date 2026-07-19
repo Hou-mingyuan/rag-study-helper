@@ -15,9 +15,24 @@
 
 ## 访问控制
 
-- 当前版本 **无应用层登录**；`/api/chat` 与文档上传对可达网络开放。
-- 生产必须在网关 / VPN / IP 白名单后部署，或前置 SSO 反向代理。
+- 首期 **API Key** 已落地：`app.api-key.enabled=true` 时，除 `/api/health` 外所有 `/api/**` 需携带 `X-API-Key`（或 `app.api-key.header` 自定义头）。
+- 默认 **关闭**（`APP_API_KEY_ENABLED=false`），保持 Mock 零密钥演示与 CI smoke 无摩擦。
+- 生产必须在网关 / VPN / IP 白名单后部署，并 **开启 API Key** 或前置 SSO 反向代理。
 - 上传接口可接收多种办公文档，需限制上传大小与 MIME（Spring `multipart`：**单文件 / 单次请求上限 50MB**，见 `application.yml`）。
+
+### API Key 配置
+
+| 变量 | 说明 |
+| --- | --- |
+| `APP_API_KEY_ENABLED` | `true` 启用校验 |
+| `APP_API_KEY` | 期望的 Key 值（勿提交 Git） |
+
+```bash
+# 生产示例
+APP_API_KEY_ENABLED=true
+APP_API_KEY=your-long-random-key
+curl -H "X-API-Key: your-long-random-key" -X POST http://localhost:8080/api/chat ...
+```
 
 ## 限流与成本
 

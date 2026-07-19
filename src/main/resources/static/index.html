@@ -448,6 +448,66 @@ body {
   max-width: 340px;
   line-height: 1.6;
 }
+.suggest-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 18px;
+  max-width: 520px;
+}
+.suggest-chip {
+  padding: 8px 14px;
+  border-radius: var(--radius-round);
+  border: 1px solid var(--border);
+  background: var(--bg-main);
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.suggest-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-light);
+}
+.kb-doc-badge {
+  margin-left: auto;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-round);
+  background: var(--accent-light);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+.kb-doc-badge.visible { display: inline-flex; }
+.stream-status {
+  max-width: 760px;
+  margin: 0 auto 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  min-height: 18px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.stream-status.active { color: var(--accent); }
+.stream-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse-dot 1s ease infinite;
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1); }
+}
 
 /* Message Bubbles */
 .message-wrapper {
@@ -781,6 +841,188 @@ body {
 .upload-icon svg { width: 36px; height: 36px; color: var(--text-muted); stroke-width: 1.5; }
 .upload-area input[type="file"] { display: none; }
 
+.upload-progress {
+  display: none;
+  margin: -16px 0 20px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+.upload-progress.visible { display: block; }
+.upload-progress-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+.upload-progress-bar {
+  height: 6px;
+  border-radius: var(--radius-round);
+  background: var(--border-light);
+  overflow: hidden;
+}
+.upload-progress-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), #7c3aed);
+  transition: width 0.15s ease;
+}
+.upload-progress.processing .upload-progress-fill {
+  width: 100%;
+  background-size: 200% 100%;
+  animation: upload-indeterminate 1.2s ease infinite;
+}
+.chunk-preview-panel {
+  display: none;
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  max-height: 320px;
+  overflow-y: auto;
+}
+.chunk-preview-panel.open { display: block; }
+.chunk-preview-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.chunk-preview-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+.chunk-preview-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 400;
+  margin-top: 2px;
+}
+.chunk-preview-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.chunk-preview-btn {
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border);
+  background: var(--bg-main);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.chunk-preview-btn:hover { border-color: var(--accent); color: var(--accent); }
+.chunk-preview-item {
+  padding: 10px 12px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-main);
+  border: 1px solid var(--border-light);
+  margin-bottom: 8px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+.chunk-preview-item:hover { border-color: var(--accent); }
+.chunk-preview-item.expanded { max-height: none; white-space: pre-wrap; }
+.chunk-preview-item strong {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--accent);
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+.chunk-preview-item .chunk-copy {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-weight: 500;
+  padding: 2px 6px;
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.chunk-preview-item .chunk-copy:hover { color: var(--accent); }
+.chunk-preview-load {
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px;
+  font-size: 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+}
+.chunk-preview-load:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.retrieval-panel {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+.retrieval-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+.retrieval-panel-toggle {
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.retrieval-panel-toggle:hover { border-color: var(--accent); color: var(--accent); }
+.retrieval-panel.collapsed .retrieval-snippet-list { display: none; }
+.retrieval-snippet-list { display: flex; flex-direction: column; gap: 8px; }
+.retrieval-snippet {
+  padding: 8px 10px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-light);
+  background: var(--bg-main);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.retrieval-snippet:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.12);
+}
+.retrieval-snippet-source {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+.retrieval-snippet-text { white-space: pre-wrap; word-break: break-word; }
+mark.snippet-highlight {
+  background: rgba(250, 204, 21, 0.35);
+  color: inherit;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+.light-theme mark.snippet-highlight { background: rgba(234, 179, 8, 0.45); }
+
 .doc-list { list-style: none; }
 .doc-item {
   display: flex;
@@ -792,8 +1034,15 @@ body {
   margin-bottom: 6px;
   font-size: 13px;
   transition: all var(--transition);
+  cursor: pointer;
+}
+.doc-item.selected {
+  border-color: var(--accent);
+  background: var(--accent-light);
+  box-shadow: var(--shadow-xs);
 }
 .doc-item:hover { background: var(--bg-hover); }
+.doc-item.selected:hover { background: var(--accent-light); }
 .doc-item .doc-icon {
   width: 30px;
   height: 30px;
@@ -1067,6 +1316,7 @@ body {
       <button class="sidebar-footer-btn" onclick="openKnowledgeBase()">
         <svg viewBox="0 0 24 24" class="icon"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
         知识库
+        <span class="kb-doc-badge" id="kbDocBadge">0</span>
       </button>
       <button class="sidebar-footer-btn" onclick="toggleTheme()" id="themeToggle">
         <svg viewBox="0 0 24 24" class="icon" id="themeIcon"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
@@ -1094,11 +1344,13 @@ body {
           <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 15l-5-5 1.41-1.41L11 14.17l7.59-7.59L20 8l-9 9z"/></svg>
         </div>
         <h3>开始新对话</h3>
-        <p>上传文档后，输入问题即可开始与知识库对话</p>
+        <p id="emptyStateHint">上传文档后，输入问题即可开始与知识库对话</p>
+        <div class="suggest-chips" id="suggestChips"></div>
       </div>
     </div>
 
     <div class="input-area">
+      <div class="stream-status" id="streamStatus"></div>
       <div class="input-wrapper">
         <textarea id="questionInput" rows="1" placeholder="输入您的问题..." onkeydown="onInputKeydown(event)"></textarea>
         <button class="send-btn" id="sendBtn" onclick="toggleSend()">
@@ -1131,6 +1383,13 @@ body {
       <input type="file" id="kbFileInput" accept=".pdf,.txt,.md,.csv,.json,.xml,.xlsx,.xls,.docx,.pptx,.html,.htm" onchange="onFileSelected(event)">
     </div>
     <div class="doc-error" id="kbUploadError"></div>
+    <div class="upload-progress" id="uploadProgress">
+      <div class="upload-progress-label">
+        <span id="uploadProgressName">上传中…</span>
+        <span id="uploadProgressPct">0%</span>
+      </div>
+      <div class="upload-progress-bar"><div class="upload-progress-fill" id="uploadProgressFill"></div></div>
+    </div>
 
     <div class="kb-section-title" style="margin-top:20px;">已入库文档</div>
     <ul class="doc-list" id="kbDocList">
@@ -1140,6 +1399,19 @@ body {
       <svg viewBox="0 0 24 24" class="icon"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       扫描目录
     </button>
+    <div class="chunk-preview-panel" id="chunkPreviewPanel">
+      <div class="chunk-preview-header">
+        <div>
+          <div class="chunk-preview-title" id="chunkPreviewTitle">分块预览</div>
+          <div class="chunk-preview-sub" id="chunkPreviewSub"></div>
+        </div>
+        <div class="chunk-preview-actions">
+          <button type="button" class="chunk-preview-btn" onclick="closeChunkPreview()">关闭</button>
+        </div>
+      </div>
+      <div id="chunkPreviewList"></div>
+      <button type="button" class="chunk-preview-load" id="chunkPreviewLoadMore" style="display:none" onclick="loadMoreChunks()">加载更多分块</button>
+    </div>
   </div>
 </div>
 
@@ -1506,9 +1778,15 @@ function sendMessage() {
   addMessageBubble('user', question, true, new Date().toISOString(), true);
   isStreaming = true;
   updateSendButton();
+  setStreamStatus('正在检索知识库并生成回答…', true);
 
   var wrapper = addMessageBubble('assistant', '');
   var bubble = wrapper.querySelector('.message.assistant');
+  var messageBody = wrapper.querySelector('.message-body');
+  var retrievalPanel = document.createElement('div');
+  retrievalPanel.className = 'retrieval-panel collapsed';
+  retrievalPanel.style.display = 'none';
+  messageBody.insertBefore(retrievalPanel, bubble);
   var cursorSpan = document.createElement('span');
   cursorSpan.className = 'cursor-blink';
   bubble.appendChild(cursorSpan);
@@ -1521,7 +1799,7 @@ function sendMessage() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ question: question, sessionId: currentSessionId }),
     signal: currentAbortController.signal
-  }).then(function(r) { return handleStream(r, wrapper, bubble, cursorSpan, accumulated); })
+  }).then(function(r) { return handleStream(r, wrapper, bubble, cursorSpan, accumulated, question, retrievalPanel); })
   .catch(function(err) {
     if (err.name === 'AbortError') return;
     cursorSpan.remove();
@@ -1530,11 +1808,12 @@ function sendMessage() {
     isStreaming = false;
     currentAbortController = null;
     updateSendButton();
+    setStreamStatus('', false);
     toast(err.message, 'error');
   });
 }
 
-function handleStream(response, wrapper, bubble, cursorSpan, accumulated) {
+function handleStream(response, wrapper, bubble, cursorSpan, accumulated, question, retrievalPanel) {
   if (!response.ok) throw new Error('请求失败 (' + response.status + ')');
   var ct = response.headers.get('Content-Type') || '';
   if (ct.indexOf('text/event-stream') === -1) {
@@ -1542,6 +1821,7 @@ function handleStream(response, wrapper, bubble, cursorSpan, accumulated) {
       cursorSpan.remove();
       isStreaming = false;
       updateSendButton();
+      setStreamStatus('', false);
       var msg = data.msg || '请求失败';
       bubble.innerHTML = msg;
       bubble.className = 'message error';
@@ -1561,6 +1841,7 @@ function handleStream(response, wrapper, bubble, cursorSpan, accumulated) {
         cursorSpan.remove();
         isStreaming = false;
         updateSendButton();
+        setStreamStatus('', false);
         bubble.innerHTML = marked.parse(accumulated);
         if (accumulated) {
           saveMessage(currentSessionId, 'assistant', accumulated);
@@ -1583,6 +1864,7 @@ function handleStream(response, wrapper, bubble, cursorSpan, accumulated) {
             cursorSpan.remove();
             isStreaming = false;
             updateSendButton();
+            setStreamStatus('', false);
             bubble.innerHTML = marked.parse(accumulated);
             if (accumulated) {
               saveMessage(currentSessionId, 'assistant', accumulated);
@@ -1598,9 +1880,21 @@ function handleStream(response, wrapper, bubble, cursorSpan, accumulated) {
               bubble.className = 'message error';
               isStreaming = false;
               updateSendButton();
+              setStreamStatus('', false);
               toast(errData.msg || '流式处理失败', 'error');
             } catch(e) {
               console.warn('SSE error parse warning:', e);
+            }
+            currentEvent = '';
+            continue;
+          }
+          if (currentEvent === 'retrieval') {
+            try {
+              var retrievalData = JSON.parse(data);
+              renderRetrievalPanel(retrievalPanel, retrievalData.snippets || [], question || '');
+              setStreamStatus('已检索到 ' + (retrievalData.snippets || []).length + ' 条参考片段，正在生成回答…', true);
+            } catch(e) {
+              console.warn('SSE retrieval parse warning:', e);
             }
             currentEvent = '';
             continue;
@@ -1636,6 +1930,80 @@ function handleStream(response, wrapper, bubble, cursorSpan, accumulated) {
     });
   }
   read();
+}
+
+function tokenizeForHighlight(query) {
+  if (!query) return [];
+  var terms = [];
+  var latin = query.match(/[a-zA-Z0-9]{2,}/g) || [];
+  latin.forEach(function(t) { terms.push(t); });
+  var cjk = query.match(/[\u4e00-\u9fff]{2,}/g) || [];
+  cjk.forEach(function(t) { terms.push(t); });
+  if (!terms.length && query.trim().length >= 2) terms.push(query.trim());
+  var seen = {};
+  return terms.filter(function(t) {
+    var key = t.toLowerCase();
+    if (seen[key]) return false;
+    seen[key] = true;
+    return true;
+  });
+}
+
+function highlightQueryTerms(text, query) {
+  var html = escapeHtml(text || '');
+  tokenizeForHighlight(query).forEach(function(term) {
+    var re = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+    html = html.replace(re, function(match) {
+      return '<mark class="snippet-highlight">' + match + '</mark>';
+    });
+  });
+  return html;
+}
+
+function renderRetrievalPanel(panel, snippets, query) {
+  if (!panel || !snippets || !snippets.length) return;
+  panel.style.display = 'block';
+  panel.classList.remove('collapsed');
+  panel.innerHTML =
+    '<div class="retrieval-panel-header">' +
+      '<span>检索到的参考片段 (' + snippets.length + ')</span>' +
+      '<button type="button" class="retrieval-panel-toggle" onclick="toggleRetrievalPanel(this)">收起</button>' +
+    '</div>' +
+    '<div class="retrieval-snippet-list">' +
+      snippets.map(function(s, idx) {
+        var docName = s.documentName || '参考文档';
+        var text = s.text || '';
+        return '<div class="retrieval-snippet" data-doc-name="' + escapeHtml(docName) + '" onclick="openRetrievalSnippetDoc(this)">' +
+          '<span class="retrieval-snippet-source">' + escapeHtml(docName) + '</span>' +
+          '<span class="retrieval-snippet-text">' + highlightQueryTerms(text, query) + '</span></div>';
+      }).join('') +
+    '</div>';
+}
+
+function toggleRetrievalPanel(btn) {
+  var panel = btn.closest('.retrieval-panel');
+  if (!panel) return;
+  panel.classList.toggle('collapsed');
+  btn.textContent = panel.classList.contains('collapsed') ? '展开' : '收起';
+}
+
+function openRetrievalSnippetDoc(el) {
+  var docName = el.getAttribute('data-doc-name');
+  if (!docName) return;
+  fetch('/api/documents')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var docs = (data && data.obj) ? data.obj : [];
+      var match = docs.find(function(d) { return d.documentName === docName; });
+      if (match && match.id) {
+        openKnowledgeBase();
+        showChunkPreview(match.id, match.documentName, match.chunks || 0);
+        toast('已打开「' + docName + '」分块预览', 'success');
+      } else {
+        toast('未找到来源文档：' + docName, 'error');
+      }
+    })
+    .catch(function(err) { toast(err.message || '打开来源文档失败', 'error'); });
 }
 
 /* ========== Auto Resize ========== */
@@ -1694,11 +2062,59 @@ function uploadFile(file) {
   if (valid.indexOf(ext) === -1) { showUploadError('不支持的文件格式'); return; }
   if (file.size > 20*1024*1024) { showUploadError('文件大小不能超过 20MB'); return; }
   hideUploadError();
+  setUploadProgress(0, file.name);
   var fd = new FormData(); fd.append('file', file);
-  fetch('/api/documents/upload', { method: 'POST', body: fd })
-    .then(handleResult)
-    .then(function(doc) { toast('"' + doc.documentName + '" 上传成功 (' + doc.chunks + ' 分块)', 'success'); loadDocList(); })
-    .catch(function(err) { showUploadError(err.message); toast('上传失败', 'error'); });
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', '/api/documents/upload');
+  xhr.upload.onprogress = function(e) {
+    if (!e.lengthComputable) return;
+    setUploadProgress(Math.round((e.loaded / e.total) * 100), file.name);
+  };
+  xhr.upload.onloadend = function() {
+    setUploadProcessing('正在分块入库与向量化…');
+  };
+  xhr.onload = function() {
+    hideUploadProgress();
+    try {
+      var payload = JSON.parse(xhr.responseText || '{}');
+      if (xhr.status >= 400 || payload.resCode !== '200') {
+        throw new Error(payload.msg || ('上传失败 (' + xhr.status + ')'));
+      }
+      var doc = payload.obj;
+      toast('"' + doc.documentName + '" 上传成功 (' + doc.chunks + ' 分块)', 'success');
+      loadDocList();
+      if (doc.id) showChunkPreview(doc.id, doc.documentName, doc.chunks);
+      refreshLearningUx();
+    } catch (err) {
+      showUploadError(err.message);
+      toast('上传失败', 'error');
+    }
+  };
+  xhr.onerror = function() {
+    hideUploadProgress();
+    showUploadError('网络错误，上传失败');
+    toast('上传失败', 'error');
+  };
+  xhr.send(fd);
+}
+function setUploadProgress(pct, name) {
+  var panel = document.getElementById('uploadProgress');
+  panel.classList.add('visible');
+  panel.classList.remove('processing');
+  document.getElementById('uploadProgressName').textContent = '正在上传 ' + name + '…';
+  document.getElementById('uploadProgressPct').textContent = pct + '%';
+  document.getElementById('uploadProgressFill').style.width = pct + '%';
+}
+function setUploadProcessing(label) {
+  var panel = document.getElementById('uploadProgress');
+  panel.classList.add('visible', 'processing');
+  document.getElementById('uploadProgressName').textContent = label;
+  document.getElementById('uploadProgressPct').textContent = '处理中';
+}
+function hideUploadProgress() {
+  var panel = document.getElementById('uploadProgress');
+  panel.classList.remove('visible', 'processing');
+  document.getElementById('uploadProgressFill').style.width = '0%';
 }
 function showUploadError(m) { var el = document.getElementById('kbUploadError'); el.textContent = m; el.classList.add('visible'); }
 function hideUploadError() { document.getElementById('kbUploadError').classList.remove('visible'); }
@@ -1706,8 +2122,147 @@ function hideUploadError() { document.getElementById('kbUploadError').classList.
 function scanDocuments() {
   fetch('/api/documents/scan', { method: 'POST' })
     .then(handleResult)
-    .then(function() { toast('目录扫描完成', 'success'); loadDocList(); })
+    .then(function(docs) {
+      toast('目录扫描完成', 'success');
+      loadDocList();
+      refreshLearningUx();
+      if (docs && docs.length) showChunkPreview(docs[0].id, docs[0].documentName, docs[0].chunks);
+    })
     .catch(function(e) { toast('扫描失败: ' + e.message, 'error'); });
+}
+
+var selectedDocId = null;
+var chunkPreviewState = { docId: null, docName: '', total: 0, limit: 12 };
+var DEFAULT_SUGGESTIONS = [
+  'RAG 中的向量检索是怎么工作的？',
+  'Embedding 用来做什么？',
+  '查询改写解决什么问题？'
+];
+
+function closeChunkPreview() {
+  document.getElementById('chunkPreviewPanel').classList.remove('open');
+  selectedDocId = null;
+  chunkPreviewState = { docId: null, docName: '', total: 0, limit: 12 };
+  document.querySelectorAll('.doc-item').forEach(function(el) { el.classList.remove('selected'); });
+}
+
+function renderChunkItems(chunks) {
+  return chunks.map(function(c, idx) {
+    return '<div class="chunk-preview-item" data-idx="' + idx + '" onclick="toggleChunkExpand(this, event)">' +
+      '<strong><span>分块 #' + (c.chunkIndex + 1) + ' · ' + c.charCount + ' 字</span>' +
+      '<span class="chunk-copy" onclick="copyChunkText(event, ' + idx + ')">复制</span></strong>' +
+      '<span class="chunk-text">' + escapeHtml(c.preview) + '</span></div>';
+  }).join('');
+}
+
+function toggleChunkExpand(el, e) {
+  if (e && e.target && e.target.classList.contains('chunk-copy')) return;
+  el.classList.toggle('expanded');
+}
+
+function copyChunkText(e, idx) {
+  e.stopPropagation();
+  var cache = window.__chunkPreviewCache || [];
+  var text = (cache[idx] && cache[idx].preview) ? cache[idx].preview : '';
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function() { toast('已复制分块文本', 'success'); });
+  } else {
+    toast('复制失败：浏览器不支持', 'error');
+  }
+}
+
+function updateChunkLoadMore(chunksLoaded) {
+  var btn = document.getElementById('chunkPreviewLoadMore');
+  var total = chunkPreviewState.total || chunksLoaded;
+  if (total > chunksLoaded && chunksLoaded < 30) {
+    btn.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = '加载更多（已显示 ' + chunksLoaded + ' / ' + total + '）';
+  } else {
+    btn.style.display = 'none';
+  }
+  document.getElementById('chunkPreviewSub').textContent =
+    total ? '共 ' + total + ' 个分块 · 点击分块展开 · 已显示 ' + Math.min(chunksLoaded, total) + ' 个' : '';
+}
+
+function showChunkPreview(docId, docName, totalChunks) {
+  selectedDocId = docId;
+  chunkPreviewState = { docId: docId, docName: docName, total: totalChunks || 0, limit: 12 };
+  var panel = document.getElementById('chunkPreviewPanel');
+  var list = document.getElementById('chunkPreviewList');
+  document.getElementById('chunkPreviewTitle').textContent = '分块预览 · ' + docName;
+  list.innerHTML = '<div class="chunk-preview-item">加载中…</div>';
+  panel.classList.add('open');
+  document.querySelectorAll('.doc-item').forEach(function(el) {
+    el.classList.toggle('selected', el.getAttribute('data-doc-id') === String(docId));
+  });
+  fetchChunkPage(docId, chunkPreviewState.limit);
+}
+
+function fetchChunkPage(docId, limit) {
+  var list = document.getElementById('chunkPreviewList');
+  fetch('/api/documents/' + docId + '/chunks?limit=' + limit)
+    .then(handleResult)
+    .then(function(chunks) {
+      window.__chunkPreviewCache = chunks || [];
+      if (!chunks || !chunks.length) {
+        list.innerHTML = '<div class="chunk-preview-item">暂无分块数据</div>';
+        updateChunkLoadMore(0);
+        return;
+      }
+      list.innerHTML = renderChunkItems(chunks);
+      updateChunkLoadMore(chunks.length);
+    })
+    .catch(function(err) {
+      list.innerHTML = '<div class="chunk-preview-item">预览失败: ' + escapeHtml(err.message) + '</div>';
+    });
+}
+
+function loadMoreChunks() {
+  if (!chunkPreviewState.docId) return;
+  chunkPreviewState.limit = Math.min(chunkPreviewState.limit + 12, 30);
+  var btn = document.getElementById('chunkPreviewLoadMore');
+  btn.disabled = true;
+  btn.textContent = '加载中…';
+  fetchChunkPage(chunkPreviewState.docId, chunkPreviewState.limit);
+}
+
+function refreshLearningUx() {
+  fetch('/api/documents')
+    .then(handleResult)
+    .then(function(docs) {
+      var count = (docs && docs.length) || 0;
+      var badge = document.getElementById('kbDocBadge');
+      badge.textContent = String(count);
+      badge.classList.toggle('visible', count > 0);
+      var hint = document.getElementById('emptyStateHint');
+      var chips = document.getElementById('suggestChips');
+      if (count > 0) {
+        hint.textContent = '知识库已有 ' + count + ' 份文档，可直接提问或点击推荐问题';
+        chips.innerHTML = DEFAULT_SUGGESTIONS.map(function(q) {
+          return '<button type="button" class="suggest-chip" onclick="applySuggestion(this)">' + escapeHtml(q) + '</button>';
+        }).join('');
+      } else {
+        hint.textContent = '先在知识库上传或扫描 data/docs/，再开始问答';
+        chips.innerHTML = '<button type="button" class="suggest-chip" onclick="openKnowledgeBase()">打开知识库上传</button>';
+      }
+    })
+    .catch(function() {});
+}
+
+function applySuggestion(el) {
+  var input = document.getElementById('questionInput');
+  input.value = el.textContent;
+  input.focus();
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+}
+
+function setStreamStatus(text, active) {
+  var el = document.getElementById('streamStatus');
+  if (!text) { el.className = 'stream-status'; el.innerHTML = ''; return; }
+  el.className = 'stream-status' + (active ? ' active' : '');
+  el.innerHTML = active ? '<span class="stream-dot"></span><span>' + escapeHtml(text) + '</span>' : escapeHtml(text);
 }
 
 function loadDocList() {
@@ -1717,12 +2272,13 @@ function loadDocList() {
     .then(function(docs) {
       if (!docs || docs.length === 0) { list.innerHTML = '<li class="doc-empty">暂无文档</li>'; return; }
       list.innerHTML = docs.map(function(d) {
-        return '<li class="doc-item">' +
+        return '<li class="doc-item" data-doc-id="' + d.id + '" onclick="showChunkPreview(' + d.id + ', ' + JSON.stringify(d.documentName) + ', ' + (d.chunks || 0) + ')">' +
           '<span class="doc-icon"><svg viewBox="0 0 24 24" class="icon"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>' +
-          '<span class="doc-info"><div class="doc-name">' + escapeHtml(d.documentName) + '</div><div class="doc-meta">' + d.chunks + ' 分块</div></span>' +
+          '<span class="doc-info"><div class="doc-name">' + escapeHtml(d.documentName) + '</div><div class="doc-meta">' + d.chunks + ' 分块 · 点击查看预览</div></span>' +
           '<button class="doc-delete-btn" onclick="deleteDocument(' + d.id + ', event)" title="删除文档"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>' +
           '</li>';
       }).join('');
+      refreshLearningUx();
     })
     .catch(function(err) { list.innerHTML = '<li class="doc-empty">加载失败: ' + escapeHtml(err.message) + '</li>'; });
 }
@@ -1732,7 +2288,7 @@ function deleteDocument(id, e) {
   showConfirmDialog('确认删除', '确定删除此文档？文档及向量数据将被永久删除。', function() {
     fetch('/api/documents/' + id, { method: 'DELETE' })
       .then(handleResult)
-      .then(function() { toast('文档已删除', 'success'); loadDocList(); })
+      .then(function() { toast('文档已删除', 'success'); loadDocList(); refreshLearningUx(); document.getElementById('chunkPreviewPanel').classList.remove('open'); })
       .catch(function(err) { toast('删除失败: ' + err.message, 'error'); });
   });
 }
@@ -1772,6 +2328,7 @@ function toast(msg, type) {
   var sessions = loadSessions();
   currentSessionId = sessions.length > 0 ? sessions[0].id : createSession();
   renderAll();
+  refreshLearningUx();
 })();
 </script>
 </body>

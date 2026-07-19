@@ -58,10 +58,11 @@ services:
       SPRING_REDIS_PORT: ${SPRING_REDIS_PORT:-6379}
       SPRING_REDIS_PASSWORD: ${SPRING_REDIS_PASSWORD:-}
       # === RAG 基础配置 ===
-      APP_RAG_CHAT_API_KEY: ${APP_RAG_CHAT_API_KEY}
+      APP_RAG_PROVIDER: ${APP_RAG_PROVIDER:-mock}
+      APP_RAG_CHAT_API_KEY: ${APP_RAG_CHAT_API_KEY:-}
       APP_RAG_CHAT_BASE_URL: ${APP_RAG_CHAT_BASE_URL:-https://api.deepseek.com}
       APP_RAG_CHAT_MODEL_NAME: ${APP_RAG_CHAT_MODEL_NAME:-deepseek-v4-flash}
-      APP_RAG_EMBEDDING_API_KEY: ${APP_RAG_EMBEDDING_API_KEY}
+      APP_RAG_EMBEDDING_API_KEY: ${APP_RAG_EMBEDDING_API_KEY:-}
       APP_RAG_EMBEDDING_BASE_URL: ${APP_RAG_EMBEDDING_BASE_URL:-https://api.siliconflow.cn/v1}
       APP_RAG_EMBEDDING_MODEL_NAME: ${APP_RAG_EMBEDDING_MODEL_NAME:-BAAI/bge-large-zh-v1.5}
       APP_RAG_RERANK_API_KEY: ${APP_RAG_RERANK_API_KEY:-${APP_RAG_EMBEDDING_API_KEY}}
@@ -80,6 +81,8 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    volumes:
+      - ./data/docs:/app/data/docs
 
 volumes:
   mysql-data:
