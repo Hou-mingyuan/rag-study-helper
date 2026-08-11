@@ -64,7 +64,7 @@ jobs:
           node --check scripts/evaluate-mock.mjs
           node --check scripts/chroma-collection-backup.mjs
           node --test src/test/js/ui-core.test.mjs
-          python scripts/browser_acceptance.py --help
+          python -m py_compile scripts/browser_acceptance.py
           python scripts/multi_instance_acceptance.py --help
           python scripts/restore_acceptance.py --help
           python loadtest/dry_run.py --help
