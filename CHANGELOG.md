@@ -1,22 +1,46 @@
 # Changelog
 
-All notable changes to this project are documented in this file.
+本文件记录可验证的用户可见变化。当前版本尚未发布。
 
-## [1.0.0] - 2026-07-04
+## [2.0.0-RC1] - 2026-07-23
 
 ### Added
 
-- Enterprise RAG Q&A on Spring Boot 2.6 + LangChain4j 0.35 (JDK 8 compatible)
-- Multi-turn chat with Redis-backed session store and SSE streaming UI
-- Document ingestion: web upload, directory scan, Feishu Wiki sync
-- Hybrid retrieval pipeline: embedding search → BGE rerank → LLM answer with citations
-- Vector store options: InMemory, Chroma 0.4.24, Milvus 2.3.x via docker-compose profiles
-- Distributed rate limiting (`@RateLimit` + Redisson token bucket + daily cap)
-- MySQL metadata persistence (documents + chunk mapping) with SHA256 deduplication
-- Unit tests for RAG pipeline, Feishu sync, rerank, and global exception handling
-- `VERSION`, `CHANGELOG.md`, and `USAGE.md` for open-source release
+- 知识空间，以及空间隔离的文档、分块、任务、会话和飞书同步 API。
+- Flyway V1-V4 schema：文档版本、入库任务、向量补偿、同步运行、会话和索引元数据。
+- 上传/扫描/删除任务的进度、失败原因、取消、重试、幂等和超时恢复。
+- InMemory、Chroma、Milvus 统一向量契约，维度保护、安全重建和自动对账。
+- 会话感知查询改写、Rerank 结果状态、无资料拒答、SSE 单终态和精确分块引用。
+- 飞书分页/递归枚举、429/5xx/超时重试、分布式锁、连续缺失确认、删除阈值和运行报告。
+- 服务端会话 CRUD、Redis 原子追加、共享限流、HTTP 429/503、请求 ID 和结构化日志。
+- 新 Web 工作台：知识空间、文档/分块、任务/同步、会话、取消/重试、暗黑和移动端。
+- 固定 5 文档/27 问评估、三后端契约、Fake 飞书、真实浏览器、性能和恢复验收脚本。
 
 ### Changed
 
-- Desensitized default configs: no hardcoded DB passwords or Feishu space IDs in docs
-- Prepared for public release under `Hou-mingyuan/rag-study-helper`
+- 单一主线升级到 Java 17、Spring Boot 3.5.16、LangChain4j 1.18.0 和 MyBatis-Plus Boot 3。
+- MySQL 成为活跃文档状态真源；向量使用确定性 ID 和补偿机制，不再先删旧版本后赌新版本成功。
+- 默认端口收敛到 19050-19059，Compose 仅发布回环地址，并增加非 root、只读文件系统和资源上限。
+- 默认 provider 改为显著标识的零密钥 Mock；显式真实 provider 缺少 Key 时拒绝启动。
+- 默认 Docker 路径复用 shared-infra；应用统一为 2 CPU/1GiB，并优化 readiness 单飞刷新和文档列表查询。
+- README、部署、安全、性能和 CI 全部改为 v2 可复现流程。
+
+### Security
+
+- 公开绑定必须显式开启远程访问并配置 API Key。
+- 动态 UI 不使用不可信 `innerHTML`；增加 CSP、frame deny、nosniff、referrer 和 permissions 策略。
+- 可变 API 响应禁止缓存；Netty 统一升级到 4.1.136.Final，运行镜像升级 Alpine 修复包。
+- 日志不再输出问题、检索正文、完整飞书响应或凭据。
+- 飞书任何不完整枚举都会阻止删除，避免分页/权限/超时导致批量误删。
+
+### Verification
+
+- 118 个单元测试和 3 个 MySQL/Redis 集成测试通过；bundle 行覆盖率 80.42%，核心 service 81.24%。
+- 固定 27 问：Hit@5 1.0、MRR 0.9792、引用落地精度 1.0、期望文档引用精度 0.96、无答案准确率 1.0。
+- Chroma 持久化、真实 Milvus 2.5.27、双实例共享状态、三存储备份恢复和 Chromium 三视口验收通过；Lighthouse 100/100/100、CLS 0.004。
+- 最终两轮固定负载最慢读 p95 57.68/41.43ms、最慢写 p95 84.23/45.35ms，均为 0 错误；Java 与镜像 OS 的 HIGH/CRITICAL 均为 0。
+
+## [1.0.0] - 2026-07-04
+
+- Java 8/Spring Boot 2 原型：基础文档导入、向量检索、Redis 会话、SSE 页面和可选飞书同步。
+- 该版本缺少 v2 的知识空间、任务状态机、一致性补偿、可信引用和删除保护；不再是受支持主线。

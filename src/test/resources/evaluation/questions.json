@@ -1,0 +1,32 @@
+{
+  "version": "2026-07-23-v2",
+  "questions": [
+    {"id":"q01","question":"RAG 的中文名称是什么？","expectedDocuments":["rag-foundations.md"],"expectedTerms":["检索增强生成"]},
+    {"id":"q02","question":"RAG 的标准链路有哪四步？","expectedDocuments":["rag-foundations.md"],"expectedTerms":["文档分块","Embedding","相似片段检索","生成答案"]},
+    {"id":"q03","question":"RAG 为什么能让答案更容易核验？","expectedDocuments":["rag-foundations.md"],"expectedTerms":["引用","资料"]},
+    {"id":"q04","question":"资料里没有答案时系统应该怎么做？","expectedDocuments":["rag-foundations.md"],"expectedTerms":["没有找到可支持该问题的信息"]},
+    {"id":"q05","question":"演示基线的分块上限和重叠分别是多少？","expectedDocuments":["chunking-guide.md"],"expectedTerms":["512","64"]},
+    {"id":"q06","question":"确定性向量 ID 由哪些信息生成？","expectedDocuments":["chunking-guide.md"],"expectedTerms":["知识空间","文档","版本","分块序号","内容哈希"]},
+    {"id":"q07","question":"可信引用至少要包含哪些定位字段？","expectedDocuments":["chunking-guide.md"],"expectedTerms":["documentId","chunkId","chunkIndex"]},
+    {"id":"q08","question":"同名文件内容变化后如何处理旧版本？","expectedDocuments":["chunking-guide.md"],"expectedTerms":["新版本","STALE"]},
+    {"id":"q09","question":"哪种向量后端适合零依赖演示？","expectedDocuments":["vector-stores.md"],"expectedTerms":["InMemory"]},
+    {"id":"q10","question":"Chroma 和 Milvus 分别适合什么场景？","expectedDocuments":["vector-stores.md"],"expectedTerms":["Chroma","单机","Milvus","分布式"]},
+    {"id":"q11","question":"向量维度与现有集合不一致时应该怎么办？","expectedDocuments":["vector-stores.md"],"expectedTerms":["拒绝","新集合","重建"]},
+    {"id":"q12","question":"为什么查询命中向量后还要检查 MySQL？","expectedDocuments":["vector-stores.md"],"expectedTerms":["过期版本","已删除","跨知识空间"]},
+    {"id":"q13","question":"查询改写如何处理多轮对话中的指代词？","expectedDocuments":["query-rerank.md"],"expectedTerms":["会话历史","独立检索查询"]},
+    {"id":"q14","question":"外部 Rerank 遇到 429 后会怎样？","expectedDocuments":["query-rerank.md"],"expectedTerms":["有限重试","fallback"]},
+    {"id":"q15","question":"Prompt 如何防止资料中的指令被执行？","expectedDocuments":["query-rerank.md"],"expectedTerms":["不可信数据","不得执行"]},
+    {"id":"q16","question":"流式问答有哪些事件，终态有什么约束？","expectedDocuments":["query-rerank.md"],"expectedTerms":["status","retrieval","token","done","error","cancelled","一个终态"]},
+    {"id":"q17","question":"应用以及 shared-infra 的 MySQL、Redis、Chroma 宿主端口分别是什么？","expectedDocuments":["operations-feishu.md"],"expectedTerms":["19050","13306","16379","18000"]},
+    {"id":"q18","question":"Redis 会话为什么使用 Lua？","expectedDocuments":["operations-feishu.md"],"expectedTerms":["原子追加","多实例"]},
+    {"id":"q19","question":"飞书远端节点缺失几次后才可能删除？","expectedDocuments":["operations-feishu.md"],"expectedTerms":["连续两次","完整"]},
+    {"id":"q20","question":"哪些飞书同步异常会阻断删除？","expectedDocuments":["operations-feishu.md"],"expectedTerms":["分页失败","零节点","权限收缩","内容读取失败"]},
+    {"id":"q21","question":"RAG 有哪些主要收益？","expectedDocuments":["rag-foundations.md"],"expectedTerms":["引用","更新知识库"],"sessionGroup":"followup-rag","turn":1},
+    {"id":"q22","question":"它为什么仍不能保证绝对正确？","expectedDocuments":["rag-foundations.md"],"expectedTerms":["不能保证","错误"],"sessionGroup":"followup-rag","turn":2},
+    {"id":"q23","question":"如何同时保证向量检索结果不过期并且引用能精确跳转？","expectedDocuments":["vector-stores.md","chunking-guide.md"],"expectedTerms":["MySQL","chunkId"],"crossDocument":true},
+    {"id":"q24","question":"Rerank 之后的片段怎样形成可信回答？","expectedDocuments":["query-rerank.md","rag-foundations.md"],"expectedTerms":["上下文","引用"],"crossDocument":true},
+    {"id":"q25","question":"火星表面的平均气温是多少？","expectedDocuments":[],"expectedTerms":[],"noAnswer":true},
+    {"id":"q26","question":"这套系统的作者出生在哪个城市？","expectedDocuments":[],"expectedTerms":[],"noAnswer":true},
+    {"id":"q27","question":"推荐购买哪一款显卡？","expectedDocuments":[],"expectedTerms":[],"noAnswer":true}
+  ]
+}

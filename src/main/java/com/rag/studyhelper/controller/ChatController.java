@@ -4,15 +4,20 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rag.studyhelper.config.IpRateLimit;
 import com.rag.studyhelper.model.ChatRequest;
 import com.rag.studyhelper.model.RetrievalSnippet;
+import com.rag.studyhelper.service.ChatRequestRegistry;
+import com.rag.studyhelper.service.KnowledgeSpaceService;
 import com.rag.studyhelper.service.RagQueryService;
 import com.rag.studyhelper.utils.Results;
-import dev.langchain4j.data.message.AiMessage;
-import dev.langchain4j.model.StreamingResponseHandler;
-import dev.langchain4j.model.output.Response;
+import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
+import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.task.TaskExecutor;
 import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -20,115 +25,185 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
-/**
- * 聊天接口
- */
 @RestController
 @RequestMapping("/api")
 public class ChatController {
 
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final Logger log = LoggerFactory.getLogger(ChatController.class);
 
-    @Autowired
-    private RagQueryService ragQueryService;
+    private final RagQueryService ragQueryService;
+    private final ChatRequestRegistry requests;
+    private final ObjectMapper objectMapper;
+    private final TaskExecutor chatExecutor;
+    private final long streamTimeoutMillis;
 
-    /**
-     * 整条链路逻辑
-     * 前端浏览器                    Java 后端                    LangChain OpenAI  API
-     * │                           │                            │
-     * │── POST /api/chat ────────→│                            │
-     * │                           │── HTTP streaming request ──→│
-     * │                           │                            │
-     * │   ← SSE: {"token":"你"}   │◄── "你" (onNext) ────────── │
-     * │   ← SSE: {"token":"好"}   │◄── "好" (onNext) ────────── │
-     * │   ← SSE: [DONE]           │◄── complete ─────────────── │
-     * <br/>
-     * 关于请求中断：LangChain4j 0.35.0 未暴露 HTTP 连接句柄，无法主动取消 LLM 调用
-     * 升级到 LangChain4j 1.0+（需 JDK 17）后可做到真正的请求级取消
-     * 为了方便后续升级，我没有做手动的 Java 后端与 LLM 的请求中断交互
-     * 只是让前端和java后端SSE断开连接
-     */
+    public ChatController(RagQueryService ragQueryService,
+                          ChatRequestRegistry requests,
+                          ObjectMapper objectMapper,
+                          @Qualifier("chatTaskExecutor") TaskExecutor chatExecutor,
+                          @Value("${app.rag.stream-timeout-millis:90000}") long streamTimeoutMillis) {
+        this.ragQueryService = ragQueryService;
+        this.requests = requests;
+        this.objectMapper = objectMapper;
+        this.chatExecutor = chatExecutor;
+        this.streamTimeoutMillis = Math.max(10_000L, streamTimeoutMillis);
+    }
+
     @IpRateLimit("chat")
     @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter chat(@RequestBody ChatRequest request) {
-        // 与前端交互的 SSE 响应
-        SseEmitter emitter = new SseEmitter(60_000L);
+    public SseEmitter legacyChat(@Valid @RequestBody ChatRequest request) {
+        return stream(KnowledgeSpaceService.DEFAULT_SPACE_ID, request);
+    }
 
-        try {
-            ragQueryService.streamAnswer(request.getSessionId(), request.getQuestion(), snippets -> {
-                if (snippets == null || snippets.isEmpty()) {
-                    return;
-                }
-                try {
-                    Map<String, Object> data = new HashMap<>();
-                    data.put("snippets", snippets);
-                    emitter.send(SseEmitter.event()
-                            .name("retrieval")
-                            .data(OBJECT_MAPPER.writeValueAsString(data)));
-                } catch (IOException e) {
-                    emitter.completeWithError(e);
-                }
-            }, new StreamingResponseHandler<AiMessage>() {
-                // 处理 LLM 返回的分词结果
-                @Override
-                public void onNext(String token) {
-                    try {
-                        Map<String, String> data = new HashMap<>();
-                        data.put("token", token);
-                        // 发送 json 格式给前端
-                        emitter.send(SseEmitter.event()
-                                .data(OBJECT_MAPPER.writeValueAsString(data)));
-                    } catch (IOException e) {
-                        emitter.completeWithError(e);
-                    }
-                }
+    @IpRateLimit("chat")
+    @PostMapping(value = "/spaces/{spaceId}/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter chat(@PathVariable long spaceId, @Valid @RequestBody ChatRequest request) {
+        return stream(spaceId, request);
+    }
 
-                // 处理 SSE 结束信息
-                @Override
-                public void onComplete(Response<AiMessage> response) {
-                    try {
-                        emitter.send(SseEmitter.event().data("[DONE]"));
-                        // 关闭 SSE 连接
-                        emitter.complete();
-                    } catch (IOException e) {
-                        emitter.completeWithError(e);
-                    }
-                }
+    @PostMapping("/spaces/{spaceId}/chat/requests/{requestId}/cancel")
+    public Results<Boolean> cancel(@PathVariable long spaceId, @PathVariable String requestId) {
+        return Results.success(requests.cancel(spaceId, requestId));
+    }
 
-                // 处理失败信息
-                @Override
-                public void onError(Throwable error) {
-                    log.error("LLM 流式处理失败", error);
-                    try {
-                        // 错误信息通过 SSE 响应返回给前端
-                        Results<Void> err = Results.failed("500", "流式处理失败: " + error.getMessage());
-                        emitter.send(SseEmitter.event()
-                                .name("error")
-                                .data(OBJECT_MAPPER.writeValueAsString(err)));
-                        emitter.send(SseEmitter.event().data("[DONE]"));
-                    } catch (IOException e2) {
-                        emitter.completeWithError(e2);
-                    }
-                    emitter.complete();
-                }
-            });
-        } catch (Exception e) {
-            log.error("chat 流式处理失败", e);
-            try {
-                Results<Void> err = Results.failed("500", "流式处理失败: " + e.getMessage());
-                emitter.send(SseEmitter.event()
-                        .name("error")
-                        .data(OBJECT_MAPPER.writeValueAsString(err)));
-                emitter.send(SseEmitter.event().data("[DONE]"));
-            } catch (IOException ignored) {
-            }
-            emitter.complete();
+    private SseEmitter stream(long spaceId, ChatRequest request) {
+        SseEmitter emitter = new SseEmitter(streamTimeoutMillis);
+        String requestId = requests.begin(spaceId);
+        AtomicBoolean terminal = new AtomicBoolean();
+
+        emitter.onTimeout(() -> finishCancelled(emitter, spaceId, requestId, terminal));
+        emitter.onCompletion(() -> requests.complete(requestId));
+        emitter.onError(error -> {
+            requests.cancel(spaceId, requestId);
+            requests.complete(requestId);
+        });
+
+        if (!send(emitter, "status", Map.of(
+                "requestId", requestId,
+                "state", "retrieving"))) {
+            finishCancelled(emitter, spaceId, requestId, terminal);
+            return emitter;
         }
 
+        try {
+            chatExecutor.execute(() -> executeStream(
+                    emitter, spaceId, request, requestId, terminal));
+        } catch (RuntimeException rejected) {
+            log.error("RAG stream executor rejected request: requestId={}, errorType={}",
+                    requestId, rejected.getClass().getSimpleName());
+            if (terminal.compareAndSet(false, true)) {
+                finish(emitter, requestId, "error", Map.of(
+                        "error", Results.failed("503", "Chat service is busy")));
+            }
+        }
         return emitter;
+    }
+
+    private void executeStream(SseEmitter emitter, long spaceId, ChatRequest request,
+                               String requestId, AtomicBoolean terminal) {
+        try {
+            ragQueryService.streamAnswer(spaceId, request.getSessionId(), request.getQuestion(),
+                    snippets -> sendRetrieval(emitter, spaceId, requestId, terminal, snippets),
+                    () -> requests.isCancelled(requestId),
+                    new StreamingChatResponseHandler() {
+                        @Override
+                        public void onPartialResponse(String token) {
+                            if (terminal.get() || requests.isCancelled(requestId)) {
+                                return;
+                            }
+                            if (!send(emitter, "token", Map.of(
+                                    "requestId", requestId,
+                                    "token", token))) {
+                                requests.cancel(spaceId, requestId);
+                            }
+                        }
+
+                        @Override
+                        public void onCompleteResponse(ChatResponse response) {
+                            if (!terminal.compareAndSet(false, true)) {
+                                return;
+                            }
+                            if (requests.isCancelled(requestId)) {
+                                finish(emitter, requestId, "cancelled", Map.of());
+                                return;
+                            }
+                            finish(emitter, requestId, "done", Map.of("state", "completed"));
+                        }
+
+                        @Override
+                        public void onError(Throwable error) {
+                            if (!terminal.compareAndSet(false, true)) {
+                                return;
+                            }
+                            if (error instanceof CancellationException
+                                    || requests.isCancelled(requestId)) {
+                                finish(emitter, requestId, "cancelled", Map.of());
+                                return;
+                            }
+                            log.error("RAG stream failed: requestId={}, errorType={}",
+                                    requestId, error.getClass().getSimpleName());
+                            finish(emitter, requestId, "error", Map.of(
+                                    "error", Results.failed("500", "Stream processing failed")));
+                        }
+                    });
+        } catch (CancellationException cancelled) {
+            if (terminal.compareAndSet(false, true)) {
+                finish(emitter, requestId, "cancelled", Map.of());
+            }
+        } catch (Exception error) {
+            log.error("RAG stream setup failed: requestId={}, errorType={}",
+                    requestId, error.getClass().getSimpleName());
+            if (terminal.compareAndSet(false, true)) {
+                finish(emitter, requestId, "error", Map.of(
+                        "error", Results.failed("500", "Stream setup failed")));
+            }
+        }
+    }
+
+    private void sendRetrieval(SseEmitter emitter, long spaceId, String requestId,
+                               AtomicBoolean terminal, List<RetrievalSnippet> snippets) {
+        if (terminal.get() || requests.isCancelled(requestId)) {
+            return;
+        }
+        if (!send(emitter, "retrieval", Map.of(
+                "requestId", requestId,
+                "snippets", snippets))) {
+            requests.cancel(spaceId, requestId);
+        }
+    }
+
+    private void finishCancelled(SseEmitter emitter, long spaceId, String requestId,
+                                 AtomicBoolean terminal) {
+        requests.cancel(spaceId, requestId);
+        if (terminal.compareAndSet(false, true)) {
+            finish(emitter, requestId, "cancelled", Map.of());
+        }
+    }
+
+    private void finish(SseEmitter emitter, String requestId, String event,
+                        Map<String, Object> additional) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("requestId", requestId);
+        payload.putAll(additional);
+        send(emitter, event, payload);
+        requests.complete(requestId);
+        emitter.complete();
+    }
+
+    private boolean send(SseEmitter emitter, String event, Object payload) {
+        try {
+            emitter.send(SseEmitter.event()
+                    .name(event)
+                    .data(objectMapper.writeValueAsString(payload), MediaType.APPLICATION_JSON));
+            return true;
+        } catch (IOException | IllegalStateException error) {
+            return false;
+        }
     }
 }

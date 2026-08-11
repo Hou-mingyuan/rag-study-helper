@@ -38,15 +38,29 @@ build/
 .claude/
 docs/superpowers/
 
+# Agent working notes, not part of the delivered project
+/task_plan.md
+/progress.md
+/findings.md
+
 # Environment variables (secrets)
 .env
+/.env.local
+/docker-compose.shared.yml
+/.local/
 
 # Temp files
 *.tmp
 *.temp
+__pycache__/
+*.py[cod]
 
-# User documents
-data/docs
+# User documents, except the zero-key mock demo corpus the image ships
+data/docs/*
+!data/docs/query-rewrite-guide.md
+!data/docs/rag-demo-guide.md
+!data/docs/rag-demo-overview.md
+!data/docs/vector-retrieval-basics.md
 
 mvn-settings.xml
 /.agents/skills/brandkit/SKILL.md

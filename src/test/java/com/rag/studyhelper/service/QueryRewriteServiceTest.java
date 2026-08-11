@@ -2,8 +2,8 @@ package com.rag.studyhelper.service;
 
 import com.rag.studyhelper.model.ChatMessage;
 import dev.langchain4j.data.message.AiMessage;
-import dev.langchain4j.model.chat.ChatLanguageModel;
-import dev.langchain4j.model.output.Response;
+import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.response.ChatResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -17,6 +17,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.never;
@@ -27,7 +28,7 @@ import static org.mockito.Mockito.when;
 class QueryRewriteServiceTest {
 
     @Mock
-    private ChatLanguageModel chatModel;
+    private ChatModel chatModel;
 
     @InjectMocks
     private QueryRewriteService queryRewriteService;
@@ -48,10 +49,15 @@ class QueryRewriteServiceTest {
     }
 
     @Test
+    void needsRewrite_blankQuestionIsSafe() {
+        assertFalse(QueryRewriteService.needsRewrite(null, 5));
+    }
+
+    @Test
     void rewrite_skipsWhenNoHistory() {
         String question = "RAG 是什么";
         assertEquals(question, queryRewriteService.rewrite(question, Collections.emptyList(), 5));
-        verify(chatModel, never()).generate(anyList());
+        verify(chatModel, never()).chat(anyList());
     }
 
     @Test
@@ -60,11 +66,24 @@ class QueryRewriteServiceTest {
                 new ChatMessage("user", "Java 要学哪些框架"),
                 new ChatMessage("assistant", "Spring Boot")
         );
-        when(chatModel.generate(anyList())).thenReturn(Response.from(AiMessage.from("Spring Boot 框架有哪些优势")));
+        when(chatModel.chat(anyList())).thenReturn(ChatResponse.builder()
+                .aiMessage(AiMessage.from("Spring Boot 框架有哪些优势"))
+                .build());
 
         String rewritten = queryRewriteService.rewrite("它有什么好处", history, 5);
 
         assertEquals("Spring Boot 框架有哪些优势", rewritten);
-        verify(chatModel).generate(anyList());
+        verify(chatModel).chat(anyList());
+    }
+
+    @Test
+    void rewrite_rejectsBlankModelOutputSoCallerCanUseOriginalQuery() {
+        List<ChatMessage> history = List.of(new ChatMessage("user", "RAG 是什么"));
+        when(chatModel.chat(anyList())).thenReturn(ChatResponse.builder()
+                .aiMessage(AiMessage.from("   "))
+                .build());
+
+        assertThrows(IllegalStateException.class,
+                () -> queryRewriteService.rewrite("它呢", history, 5));
     }
 }

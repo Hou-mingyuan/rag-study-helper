@@ -1,63 +1,22 @@
-# InMemory 向量库 — 零外部依赖，开箱即用
-#
-# 使用方式：
-#   1. 创建 .env 文件（参考下方示例）或直接设置环境变量
-#   2. 构建并启动:  docker compose up -d
-#   3. 查看日志:    docker compose logs -f
-#   4. 访问:       http://localhost:8080
-#   5. 停止:       docker compose down
-#
-# .env 文件示例：
-#   APP_RAG_CHAT_API_KEY=sk-deepseek-xxx
-#   APP_RAG_EMBEDDING_API_KEY=sk-siliconflow-xxx
-#   APP_FEISHU_APP_ID=cli_xxx
-#   APP_FEISHU_APP_SECRET=xxx
-#   APP_FEISHU_SPACE_ID=your-feishu-space-id
-
+# Lightweight InMemory path. MySQL and Redis are provided by shared-infra.
 services:
-  mysql:
-    image: mysql:8.0
-    container_name: rag-mysql
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
-      MYSQL_DATABASE: rag_study_helper
-    volumes:
-      - mysql-data:/var/lib/mysql
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
-    ports:
-      - "${MYSQL_HOST_PORT:-3306}:3306"
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-root}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  redis:
-    image: redis:7-alpine
-    container_name: rag-redis
-    ports:
-      - "${REDIS_HOST_PORT:-6379}:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-
   app:
-    build: .
-    container_name: rag-app
-    ports:
-      - "${APP_HOST_PORT:-8080}:8080"
+    image: rag-study-helper:2.0.0-rc1
+    build:
+      context: .
+      dockerfile: Dockerfile
     environment:
-      # === MySQL ===
-      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/rag_study_helper?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
-      SPRING_DATASOURCE_USERNAME: root
-      SPRING_DATASOURCE_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
-      # === Redis ===
-      SPRING_REDIS_HOST: ${SPRING_REDIS_HOST:-redis}
-      SPRING_REDIS_PORT: ${SPRING_REDIS_PORT:-6379}
-      SPRING_REDIS_PASSWORD: ${SPRING_REDIS_PASSWORD:-}
-      # === RAG 基础配置 ===
+      SERVER_ADDRESS: 0.0.0.0
+      SERVER_PORT: 8080
+      APP_HOST_PUBLISHED_LOOPBACK: "true"
+      APP_PUBLIC_ACCESS_ENABLED: "false"
+      SPRING_DATASOURCE_URL: "jdbc:mysql://infra-mysql:3306/rag_study_helper?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true"
+      SPRING_DATASOURCE_USERNAME: ${MYSQL_USER:-rag}
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:-rag-local-app-password}
+      REDIS_HOST: infra-redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
+      REDIS_DATABASE: ${REDIS_DATABASE:-3}
       APP_RAG_PROVIDER: ${APP_RAG_PROVIDER:-mock}
       APP_RAG_CHAT_API_KEY: ${APP_RAG_CHAT_API_KEY:-}
       APP_RAG_CHAT_BASE_URL: ${APP_RAG_CHAT_BASE_URL:-https://api.deepseek.com}
@@ -65,24 +24,45 @@ services:
       APP_RAG_EMBEDDING_API_KEY: ${APP_RAG_EMBEDDING_API_KEY:-}
       APP_RAG_EMBEDDING_BASE_URL: ${APP_RAG_EMBEDDING_BASE_URL:-https://api.siliconflow.cn/v1}
       APP_RAG_EMBEDDING_MODEL_NAME: ${APP_RAG_EMBEDDING_MODEL_NAME:-BAAI/bge-large-zh-v1.5}
-      APP_RAG_RERANK_API_KEY: ${APP_RAG_RERANK_API_KEY:-${APP_RAG_EMBEDDING_API_KEY}}
+      APP_RAG_RERANK_API_KEY: ${APP_RAG_RERANK_API_KEY:-}
       APP_RAG_RERANK_BASE_URL: ${APP_RAG_RERANK_BASE_URL:-https://api.siliconflow.cn/v1}
       APP_RAG_RERANK_MODEL_NAME: ${APP_RAG_RERANK_MODEL_NAME:-BAAI/bge-reranker-v2-m3}
-      APP_RAG_SCORE_THRESHOLD: ${APP_RAG_SCORE_THRESHOLD:-0.80}
-      # === 飞书同步（可选）===
-      APP_FEISHU_APP_ID: ${APP_FEISHU_APP_ID:-}
-      APP_FEISHU_APP_SECRET: ${APP_FEISHU_APP_SECRET:-}
-      APP_FEISHU_SPACE_ID: ${APP_FEISHU_SPACE_ID:-}
-      APP_FEISHU_CRON: ${APP_FEISHU_CRON:-0 0 */12 * * ?}
-      APP_FEISHU_SYNC_ENABLED: ${APP_FEISHU_SYNC_ENABLED:-false}
-    depends_on:
-      mysql:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
+      APP_RAG_SCORE_THRESHOLD: ${APP_RAG_SCORE_THRESHOLD:-0.77}
+      VECTOR_STORE_TYPE: in-memory
+      APP_VECTOR_COLLECTION: ${APP_VECTOR_COLLECTION:-rag_study_helper_v2}
+      APP_VECTOR_REBUILD_ON_START: ${APP_VECTOR_REBUILD_ON_START:-false}
+      APP_API_KEY_ENABLED: ${APP_API_KEY_ENABLED:-false}
+      APP_API_KEY: ${APP_API_KEY:-}
+      FEISHU_APP_ID: ${FEISHU_APP_ID:-}
+      FEISHU_APP_SECRET: ${FEISHU_APP_SECRET:-}
+      FEISHU_REMOTE_SPACE_ID: ${FEISHU_REMOTE_SPACE_ID:-}
+      FEISHU_LOCAL_SPACE_ID: ${FEISHU_LOCAL_SPACE_ID:-1}
+      FEISHU_SYNC_ENABLED: ${FEISHU_SYNC_ENABLED:-false}
+      LOG_STRUCTURED_FORMAT: ${LOG_STRUCTURED_FORMAT:-ecs}
+    ports:
+      - "127.0.0.1:${APP_HOST_PORT:-19050}:8080"
     volumes:
-      - ./data/docs:/app/data/docs
+      - app-inbox:/app/data/inbox
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    read_only: true
+    init: true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 240s
+    restart: unless-stopped
+    stop_grace_period: 30s
+    mem_limit: 1024m
+    cpus: 2.0
+    networks:
+      - devnet
+
+networks:
+  devnet:
+    external: true
 
 volumes:
-  mysql-data:
+  app-inbox:

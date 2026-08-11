@@ -1,175 +1,342 @@
 package com.rag.studyhelper.feishu.service;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import com.rag.studyhelper.feishu.client.FeishuClient;
+import com.rag.studyhelper.feishu.client.FeishuEnumeration;
+import com.rag.studyhelper.feishu.client.FeishuRemoteGateway;
 import com.rag.studyhelper.feishu.client.FeishuWikiSupport;
 import com.rag.studyhelper.feishu.client.WikiNode;
-import com.rag.studyhelper.mapper.DocumentChunksMapper;
+import com.rag.studyhelper.feishu.config.FeishuProperties;
 import com.rag.studyhelper.mapper.DocumentsMapper;
-import com.rag.studyhelper.model.DocumentChunks;
+import com.rag.studyhelper.mapper.FeishuSyncRunMapper;
 import com.rag.studyhelper.model.Documents;
+import com.rag.studyhelper.model.FeishuSyncRun;
 import com.rag.studyhelper.service.DocumentIngestionService;
-import dev.langchain4j.data.segment.TextSegment;
-import dev.langchain4j.store.embedding.EmbeddingStore;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 
+import java.io.IOException;
+import java.time.LocalDateTime;
+import java.util.HashSet;
 import java.util.List;
-import java.util.stream.Collectors;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
-/**
- * 这里没有 @Service 注解是因为需要在 FeishuConfig 中配置注入
- */
 public class FeishuSyncService {
 
     private static final Logger log = LoggerFactory.getLogger(FeishuSyncService.class);
 
-    // 自定义飞书客户端
-    private final FeishuClient feishuClient;
-    // 处理文档的工具
-    private final DocumentIngestionService ingestionService;
-    // 飞书 wiki 空间ID
-    private final String spaceId;
+    private final FeishuRemoteGateway remote;
+    private final DocumentIngestionService ingestion;
+    private final FeishuProperties properties;
+    private final DocumentsMapper documentsMapper;
+    private final FeishuSyncRunMapper runsMapper;
+    private final RedissonClient redisson;
 
-    @Autowired
-    private DocumentsMapper documentsMapper;
-
-    @Autowired
-    private DocumentChunksMapper documentChunksMapper;
-
-    @Autowired
-    private EmbeddingStore<TextSegment> embeddingStore;
-
-    public FeishuSyncService(FeishuClient feishuClient,
-                             DocumentIngestionService ingestionService, String spaceId) {
-        if (spaceId == null || spaceId.trim().isEmpty()) {
-            throw new IllegalArgumentException("app.feishu.space-id 未配置，可通过 FeishuClient.listSpaces() 获取可用 space_id");
-        }
-        this.feishuClient = feishuClient;
-        this.ingestionService = ingestionService;
-        this.spaceId = spaceId.trim();
+    public FeishuSyncService(FeishuRemoteGateway remote,
+                             DocumentIngestionService ingestion,
+                             FeishuProperties properties,
+                             DocumentsMapper documentsMapper,
+                             FeishuSyncRunMapper runsMapper,
+                             RedissonClient redisson) {
+        this.remote = remote;
+        this.ingestion = ingestion;
+        this.properties = properties;
+        this.documentsMapper = documentsMapper;
+        this.runsMapper = runsMapper;
+        this.redisson = redisson;
+        validateConfiguration();
     }
 
-//    可以用来测试启动后 飞书文档 同步功能
-//    @PostConstruct
-//    public void init(){
-//        syncWiki();
-//    }
-
     @Scheduled(cron = "${app.feishu.cron}")
-    public void syncWiki() {
-        log.info("Starting Feishu wiki sync for space: {}", spaceId);
+    public FeishuSyncReport syncWiki() {
+        FeishuSyncRun run = startRun();
+        RLock lock = redisson.getLock("feishu-sync:" + properties.getLocalSpaceId()
+                + ":" + properties.getSpaceId());
+        boolean acquired = false;
         try {
-            List<WikiNode> nodes = feishuClient.getWikiNodeTree(spaceId);
-            log.info("Found {} nodes in wiki", nodes.size());
-
-            int synced = 0, skipped = 0, failed = 0;
-
-            for (WikiNode node : nodes) {
-                String objType = node.getObjType();
-                String nodeToken = node.getNodeToken();
-                long updateTime = node.getUpdateTime();
-
-                Documents doc = documentsMapper.selectOne(
-                        Wrappers.<Documents>lambdaQuery()
-                                .eq(Documents::getFeishuNodeToken, nodeToken)
-                );
-                if (doc != null && FeishuWikiSupport.shouldSkipSync(doc.getFeishuUpdateTime(), updateTime)) {
-                    skipped++;
-                    continue;
-                }
-
-                try {
-                    String content;
-                    String fileName;
-                    switch (objType) {
-                        case "doc":
-                        case "docx":
-                            content = feishuClient.getDocumentContent(node.getObjToken());
-                            fileName = node.getNodeTitle() + "_文档";
-                            break;
-                        case "sheet":
-                            content = feishuClient.getSheetContent(node.getObjToken());
-                            fileName = node.getNodeTitle() + "_表格";
-                            break;
-                        case "bitable":
-                            content = feishuClient.getBitableContent(node.getObjToken());
-                            fileName = node.getNodeTitle() + "_多维表格";
-                            break;
-                        default:
-                            skipped++;
-                            continue;
-                    }
-
-                    // 如果是更新，先删旧向量和映射记录
-                    if (doc != null) {
-                        // 查询旧文档相关的向量映射
-                        List<DocumentChunks> oldChunks = documentChunksMapper.selectList(
-                                Wrappers.<DocumentChunks>lambdaQuery()
-                                        .eq(DocumentChunks::getDocumentId, doc.getId())
-                        );
-                        List<String> vectorIds = oldChunks.stream()
-                                .map(DocumentChunks::getVectorId)
-                                .collect(Collectors.toList());
-                        // 删除向量
-                        embeddingStore.removeAll(vectorIds);
-
-                        // 删除映射记录
-                        documentChunksMapper.delete(
-                                Wrappers.<DocumentChunks>lambdaQuery()
-                                        .eq(DocumentChunks::getDocumentId, doc.getId())
-                        );
-                        // 删除文档
-                        documentsMapper.deleteById(doc.getId());
-                    }
-
-                    // 插入文档 RAG 流程
-                    ingestionService.ingestFeishuDocument(fileName, content, nodeToken, updateTime, objType);
-                    synced++;
-                    log.info("  Synced: {} ({})", node.getNodeTitle(), nodeToken);
-                } catch (Exception e) {
-                    log.error("  Failed to sync node: {} ({})", node.getNodeTitle(), nodeToken, e);
-                    failed++;
-                }
+            acquired = lock.tryLock(properties.getLockWaitSeconds(),
+                    properties.getLockLeaseSeconds(), TimeUnit.SECONDS);
+            if (!acquired) {
+                finish(run, "SKIPPED_LOCKED", false, "Another sync instance holds the lock", null);
+                return report(run);
             }
-
-            // 清理远程已删除的文档
-            // 这里的逻辑是 第一次飞书给了 A、B、C 入库，删了C，第二次只有 A、B 就去数据库中和向量库中删 C
-            // MySQL 查出本地多出的记录，只遍历需要删除的
-            List<String> remoteTokens = nodes.stream()
-                    .map(WikiNode::getNodeToken)
-                    .collect(Collectors.toList());
-            if (!remoteTokens.isEmpty()) {
-                List<Documents> toRemove = documentsMapper.selectList(
-                        Wrappers.<Documents>lambdaQuery()
-                                .isNotNull(Documents::getFeishuNodeToken)
-                                .notIn(Documents::getFeishuNodeToken, remoteTokens)
-                );
-                for (Documents removed : toRemove) {
-                    log.info("Document removed remotely, cleaning up: {} ({})", removed.getDocumentName(), removed.getFeishuNodeToken());
-                    List<DocumentChunks> chunks = documentChunksMapper.selectList(
-                            Wrappers.<DocumentChunks>lambdaQuery()
-                                    .eq(DocumentChunks::getDocumentId, removed.getId())
-                    );
-                    List<String> vectorIds = chunks.stream()
-                            .map(DocumentChunks::getVectorId)
-                            .collect(Collectors.toList());
-                    embeddingStore.removeAll(vectorIds);
-
-                    documentChunksMapper.delete(
-                            Wrappers.<DocumentChunks>lambdaQuery()
-                                    .eq(DocumentChunks::getDocumentId, removed.getId())
-                    );
-                    documentsMapper.deleteById(removed.getId());
-                }
+            execute(run);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            resetMissingCounters();
+            finish(run, "FAILED", false, null, "Sync lock wait was interrupted");
+        } catch (Exception error) {
+            resetMissingCounters();
+            finish(run, "FAILED", false, null, safeError(error));
+            log.error("Feishu sync run failed: runId={}, spaceId={}",
+                    run.getId(), properties.getLocalSpaceId(), error);
+        } finally {
+            if (acquired && lock.isHeldByCurrentThread()) {
+                lock.unlock();
             }
-
-            log.info("Feishu wiki sync complete: synced={}, skipped={}, failed={}",
-                    synced, skipped, failed);
-        } catch (Exception e) {
-            log.error("Feishu wiki sync failed", e);
         }
+        return report(run);
+    }
+
+    public List<FeishuSyncRun> listRuns(long spaceId) {
+        if (spaceId != properties.getLocalSpaceId()) {
+            throw new IllegalArgumentException("Feishu sync is not configured for this knowledge space");
+        }
+        return runsMapper.selectList(Wrappers.<FeishuSyncRun>lambdaQuery()
+                .eq(FeishuSyncRun::getSpaceId, spaceId)
+                .eq(FeishuSyncRun::getRemoteSpaceId, properties.getSpaceId())
+                .orderByDesc(FeishuSyncRun::getStartTime)
+                .last("LIMIT 50"));
+    }
+
+    private void execute(FeishuSyncRun run) throws IOException {
+        FeishuEnumeration enumeration;
+        try {
+            enumeration = remote.enumerate(properties.getSpaceId());
+        } catch (IOException error) {
+            resetMissingCounters();
+            finish(run, "FAILED", false, null, safeError(error));
+            return;
+        }
+        if (!enumeration.complete()) {
+            resetMissingCounters();
+            finish(run, "FAILED", false, null, "Remote enumeration was incomplete");
+            return;
+        }
+
+        run.setEnumerationComplete(true);
+        run.setPagesFetched(enumeration.pagesFetched());
+        run.setRetryCount(enumeration.retryCount());
+        run.setNodesSeen(enumeration.nodes().size());
+        run.setRemoteCursor(String.valueOf(enumeration.maxUpdateTime()));
+
+        Set<String> remoteTokens = new HashSet<>();
+        for (WikiNode node : enumeration.nodes()) {
+            remoteTokens.add(node.getNodeToken());
+            syncNode(run, node);
+        }
+
+        if (run.getNodesFailed() > 0) {
+            resetMissingCounters();
+            finish(run, "PARTIAL", true, "Delete phase blocked because one or more nodes failed",
+                    run.getErrorSummary());
+            return;
+        }
+
+        applyProtectedDeletes(run, remoteTokens);
+        String status = run.getNodesFailed() > 0 ? "PARTIAL" : "SUCCEEDED";
+        finish(run, status, true, run.getGuardReason(), run.getErrorSummary());
+    }
+
+    private void syncNode(FeishuSyncRun run, WikiNode node) {
+        Documents existing = findRemoteDocument(node.getNodeToken());
+        if (!isSupported(node.getObjType())) {
+            if (existing != null) {
+                markSeen(existing, run.getId());
+            }
+            incrementSkipped(run);
+            return;
+        }
+        try {
+            if (existing != null
+                    && FeishuWikiSupport.shouldSkipSync(existing.getFeishuUpdateTime(), node.getUpdateTime())) {
+                markSeen(existing, run.getId());
+                incrementSkipped(run);
+                return;
+            }
+
+            String content = remote.readContent(node);
+            ingestion.ingestFeishuDocument(
+                    properties.getLocalSpaceId(), properties.getSpaceId(),
+                    displayName(node), content, node.getNodeToken(),
+                    node.getUpdateTime(), node.getObjType());
+            Documents indexed = findRemoteDocument(node.getNodeToken());
+            if (indexed != null) {
+                markSeen(indexed, run.getId());
+            }
+            if (existing == null) {
+                run.setNodesCreated(run.getNodesCreated() + 1);
+            } else {
+                run.setNodesUpdated(run.getNodesUpdated() + 1);
+            }
+        } catch (Exception error) {
+            run.setNodesFailed(run.getNodesFailed() + 1);
+            appendError(run, node.getNodeToken() + ": " + safeError(error));
+            log.warn("Feishu node sync failed: runId={}, nodeToken={}, type={}",
+                    run.getId(), node.getNodeToken(), node.getObjType());
+        }
+    }
+
+    private void applyProtectedDeletes(FeishuSyncRun run, Set<String> remoteTokens) {
+        List<Documents> local = documentsMapper.selectList(Wrappers.<Documents>lambdaQuery()
+                .eq(Documents::getSpaceId, properties.getLocalSpaceId())
+                .eq(Documents::getRemoteSpaceId, properties.getSpaceId())
+                .eq(Documents::getSource, "FEISHU")
+                .notIn(Documents::getStatus, List.of("DELETED", "DELETING")));
+
+        List<Documents> missing = local.stream()
+                .filter(document -> !remoteTokens.contains(document.getFeishuNodeToken()))
+                .toList();
+        run.setDeleteCandidates(missing.size());
+
+        for (Documents document : missing) {
+            document.setRemoteMissingCount((document.getRemoteMissingCount() == null
+                    ? 0 : document.getRemoteMissingCount()) + 1);
+            documentsMapper.updateById(document);
+        }
+
+        int confirmations = Math.max(2, properties.getMissingConfirmations());
+        List<Documents> eligible = missing.stream()
+                .filter(document -> document.getRemoteMissingCount() >= confirmations)
+                .toList();
+        if (eligible.isEmpty()) {
+            return;
+        }
+
+        String guard = deletionGuard(local.size(), remoteTokens.size(), eligible.size());
+        if (guard != null) {
+            run.setDeletesProtected(eligible.size());
+            run.setGuardReason(guard);
+            return;
+        }
+
+        for (Documents document : eligible) {
+            try {
+                ingestion.deleteDocument(properties.getLocalSpaceId(), document.getId());
+                run.setNodesDeleted(run.getNodesDeleted() + 1);
+            } catch (Exception error) {
+                run.setNodesFailed(run.getNodesFailed() + 1);
+                appendError(run, document.getFeishuNodeToken() + ": delete cleanup queued");
+            }
+        }
+    }
+
+    private String deletionGuard(int localCount, int remoteCount, int eligibleCount) {
+        if (properties.isProtectZeroRemote() && localCount > 0 && remoteCount == 0) {
+            return "Remote enumeration returned zero nodes while local Feishu documents exist";
+        }
+        if (eligibleCount > Math.max(0, properties.getMaxDeleteCount())) {
+            return "Delete candidate count exceeds max-delete-count";
+        }
+        double ratio = localCount == 0 ? 0d : (double) eligibleCount / localCount;
+        if (ratio > Math.max(0d, properties.getMaxDeleteRatio())) {
+            return "Delete candidate ratio exceeds max-delete-ratio";
+        }
+        return null;
+    }
+
+    private Documents findRemoteDocument(String nodeToken) {
+        return documentsMapper.selectOne(Wrappers.<Documents>lambdaQuery()
+                .eq(Documents::getSpaceId, properties.getLocalSpaceId())
+                .eq(Documents::getRemoteSpaceId, properties.getSpaceId())
+                .eq(Documents::getFeishuNodeToken, nodeToken)
+                .ne(Documents::getStatus, "DELETED"));
+    }
+
+    private void markSeen(Documents document, long runId) {
+        document.setRemoteMissingCount(0);
+        document.setLastSeenSyncRunId(runId);
+        documentsMapper.updateById(document);
+    }
+
+    private void resetMissingCounters() {
+        Documents patch = new Documents();
+        patch.setRemoteMissingCount(0);
+        documentsMapper.update(patch, Wrappers.<Documents>lambdaUpdate()
+                .eq(Documents::getSpaceId, properties.getLocalSpaceId())
+                .eq(Documents::getRemoteSpaceId, properties.getSpaceId())
+                .eq(Documents::getSource, "FEISHU")
+                .ne(Documents::getStatus, "DELETED"));
+    }
+
+    private FeishuSyncRun startRun() {
+        FeishuSyncRun run = new FeishuSyncRun();
+        run.setSpaceId(properties.getLocalSpaceId());
+        run.setRemoteSpaceId(properties.getSpaceId());
+        run.setStatus("RUNNING");
+        run.setEnumerationComplete(false);
+        run.setPagesFetched(0);
+        run.setNodesSeen(0);
+        run.setNodesCreated(0);
+        run.setNodesUpdated(0);
+        run.setNodesSkipped(0);
+        run.setNodesFailed(0);
+        run.setDeleteCandidates(0);
+        run.setNodesDeleted(0);
+        run.setDeletesProtected(0);
+        run.setRetryCount(0);
+        run.setStartTime(LocalDateTime.now());
+        runsMapper.insert(run);
+        return run;
+    }
+
+    private void finish(FeishuSyncRun run, String status, boolean complete,
+                        String guardReason, String errorSummary) {
+        run.setStatus(status);
+        run.setEnumerationComplete(complete);
+        run.setGuardReason(abbreviate(guardReason, 500));
+        run.setErrorSummary(abbreviate(errorSummary, 1000));
+        run.setFinishTime(LocalDateTime.now());
+        runsMapper.updateById(run);
+    }
+
+    private FeishuSyncReport report(FeishuSyncRun run) {
+        return new FeishuSyncReport(
+                run.getId(), run.getStatus(), Boolean.TRUE.equals(run.getEnumerationComplete()),
+                run.getNodesSeen(), run.getNodesCreated(), run.getNodesUpdated(),
+                run.getNodesSkipped(), run.getNodesFailed(), run.getDeleteCandidates(),
+                run.getNodesDeleted(), run.getDeletesProtected(), run.getRetryCount(),
+                run.getGuardReason(), run.getErrorSummary());
+    }
+
+    private void incrementSkipped(FeishuSyncRun run) {
+        run.setNodesSkipped(run.getNodesSkipped() + 1);
+    }
+
+    private void appendError(FeishuSyncRun run, String message) {
+        String current = run.getErrorSummary();
+        run.setErrorSummary(abbreviate(current == null ? message : current + "; " + message, 1000));
+    }
+
+    private String displayName(WikiNode node) {
+        String suffix = switch (node.getObjType()) {
+            case "sheet" -> "_sheet";
+            case "bitable" -> "_bitable";
+            default -> "_document";
+        };
+        return (node.getNodeTitle() == null || node.getNodeTitle().isBlank()
+                ? node.getNodeToken() : node.getNodeTitle()) + suffix;
+    }
+
+    private boolean isSupported(String type) {
+        return "doc".equals(type) || "docx".equals(type)
+                || "sheet".equals(type) || "bitable".equals(type);
+    }
+
+    private void validateConfiguration() {
+        if (properties.getSpaceId() == null || properties.getSpaceId().isBlank()) {
+            throw new IllegalArgumentException("app.feishu.space-id is required when sync is enabled");
+        }
+        if (properties.getLocalSpaceId() <= 0) {
+            throw new IllegalArgumentException("app.feishu.local-space-id must be positive");
+        }
+        if (properties.getLockLeaseSeconds() <= 0) {
+            throw new IllegalArgumentException("app.feishu.lock-lease-seconds must be positive");
+        }
+    }
+
+    private static String safeError(Throwable error) {
+        String message = error.getMessage();
+        return abbreviate(message == null ? error.getClass().getSimpleName() : message, 1000);
+    }
+
+    private static String abbreviate(String value, int limit) {
+        if (value == null) {
+            return null;
+        }
+        return value.length() <= limit ? value : value.substring(0, limit);
     }
 }

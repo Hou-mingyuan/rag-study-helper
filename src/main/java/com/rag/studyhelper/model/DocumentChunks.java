@@ -19,14 +19,35 @@ public class DocumentChunks {
     @TableId(type = IdType.AUTO)
     private Long id;
 
+    private Long spaceId;
+
     private Long documentId;
+
+    private Integer documentVersion;
 
     private String vectorId;
 
     private Integer chunkIndex;
 
+    private String chunkHash;
+
+    private String sectionTitle;
+
+    private Integer pageNumber;
+
+    private Integer startOffset;
+
+    private Integer endOffset;
+
+    private Integer tokenCount;
+
+    private String status;
+
     private String chunkText;
 
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;
+
+    @TableField(fill = FieldFill.INSERT_UPDATE)
+    private LocalDateTime updateTime;
 }

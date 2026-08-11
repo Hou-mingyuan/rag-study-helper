@@ -3,6 +3,7 @@ package com.rag.studyhelper.config;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RagProviderResolverTest {
@@ -23,5 +24,17 @@ class RagProviderResolverTest {
     void openaiProvider_disablesMockMode() {
         RagProviderResolver resolver = new RagProviderResolver("openai", "chat-key", "embed-key");
         assertFalse(resolver.isMockMode());
+    }
+
+    @Test
+    void openaiProviderWithoutBothKeysFailsFast() {
+        assertThrows(IllegalStateException.class,
+                () -> new RagProviderResolver("openai", "chat-key", ""));
+    }
+
+    @Test
+    void unknownProviderIsRejected() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new RagProviderResolver("mystery", "", ""));
     }
 }

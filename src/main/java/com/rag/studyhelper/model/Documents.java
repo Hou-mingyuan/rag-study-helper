@@ -19,9 +19,19 @@ public class Documents {
     @TableId(type = IdType.AUTO)
     private Long id;
 
+    private Long spaceId;
+
+    private String status;
+
+    private Integer currentVersion;
+
+    private Integer pendingVersion;
+
     private String documentName;
 
     private String documentType;
+
+    private String mimeType;
 
     private String source;
 
@@ -29,13 +39,27 @@ public class Documents {
 
     private Long fileSize;
 
+    private String originalPath;
+
     private Integer chunkCount;
 
     private String feishuNodeToken;
 
     private String feishuObjType;
 
+    private String remoteSpaceId;
+
     private Long feishuUpdateTime;
+
+    private Integer remoteMissingCount;
+
+    private Long lastSeenSyncRunId;
+
+    private String lastError;
+
+    private LocalDateTime deletedAt;
+
+    private Long rowVersion;
 
     private String creator;
 

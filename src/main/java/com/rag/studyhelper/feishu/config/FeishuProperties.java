@@ -45,4 +45,36 @@ public class FeishuProperties {
      * 是否开启飞书同步功能 （默认关闭）
      */
     private boolean syncEnabled = false;
+
+    private String baseUrl = "https://open.feishu.cn";
+
+    private long localSpaceId = 1L;
+
+    private int connectTimeoutMillis = 5000;
+
+    private int readTimeoutMillis = 15000;
+
+    private int writeTimeoutMillis = 5000;
+
+    private int maxRetries = 3;
+
+    private long initialBackoffMillis = 200L;
+
+    private long minRequestIntervalMillis = 0L;
+
+    private int pageSize = 50;
+
+    private int maxPages = 1000;
+
+    private int missingConfirmations = 2;
+
+    private int maxDeleteCount = 10;
+
+    private double maxDeleteRatio = 0.25d;
+
+    private boolean protectZeroRemote = true;
+
+    private long lockWaitSeconds = 0L;
+
+    private long lockLeaseSeconds = 600L;
 }

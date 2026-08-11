@@ -3,18 +3,17 @@ package com.rag.studyhelper.config;
 import com.rag.studyhelper.mock.MockChatModels;
 import com.rag.studyhelper.mock.MockEmbeddingModel;
 import dev.langchain4j.data.segment.TextSegment;
-import dev.langchain4j.model.chat.ChatLanguageModel;
-import dev.langchain4j.model.chat.StreamingChatLanguageModel;
+import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
-import dev.langchain4j.model.openai.OpenAiChatModelName;
 import dev.langchain4j.model.openai.OpenAiEmbeddingModel;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
-import dev.langchain4j.model.openai.OpenAiTokenizer;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.chroma.ChromaEmbeddingStore;
 import dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore;
 import dev.langchain4j.store.embedding.milvus.MilvusEmbeddingStore;
+import io.milvus.common.clientenum.ConsistencyLevelEnum;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -90,17 +89,20 @@ public class LangChain4jConfig {
     @Bean
     @ConditionalOnProperty(name = "vector.store.type", havingValue = "milvus")
     @Lazy
-    public MilvusEmbeddingStore milvusEmbeddingStore() {
+    public MilvusEmbeddingStore milvusEmbeddingStore(RagProviderResolver provider) {
+        int effectiveDimension = provider.isMockMode()
+                ? MockEmbeddingModel.DIMENSION : milvusDimension;
         return MilvusEmbeddingStore.builder()
                 .host(milvusHost)
                 .port(milvusPort)
                 .collectionName(milvusCollectionName)
-                .dimension(milvusDimension)
+                .dimension(effectiveDimension)
+                .consistencyLevel(ConsistencyLevelEnum.STRONG)
                 .build();
     }
 
     @Bean
-    public ChatLanguageModel chatLanguageModel(RagProviderResolver provider) {
+    public ChatModel chatModel(RagProviderResolver provider) {
         if (provider.isMockMode()) {
             return MockChatModels.chatLanguageModel();
         }
@@ -110,12 +112,11 @@ public class LangChain4jConfig {
                 .modelName(chatModelName)
                 .temperature(temperature)
                 .timeout(Duration.ofSeconds(60))
-                .tokenizer(new OpenAiTokenizer(OpenAiChatModelName.GPT_3_5_TURBO))
                 .build();
     }
 
     @Bean
-    public StreamingChatLanguageModel streamingChatLanguageModel(RagProviderResolver provider) {
+    public StreamingChatModel streamingChatModel(RagProviderResolver provider) {
         if (provider.isMockMode()) {
             return MockChatModels.streamingChatLanguageModel();
         }
@@ -125,7 +126,6 @@ public class LangChain4jConfig {
                 .modelName(chatModelName)
                 .temperature(temperature)
                 .timeout(Duration.ofSeconds(60))
-                .tokenizer(new OpenAiTokenizer(OpenAiChatModelName.GPT_3_5_TURBO))
                 .build();
     }
 
