@@ -3,7 +3,8 @@
 # ===================================================================
 
 server:
-  port: 8080
+  address: ${SERVER_ADDRESS:127.0.0.1}
+  port: ${SERVER_PORT:8080}
 
 # ===================================================================
 #  API 密钥
@@ -12,38 +13,64 @@ server:
 #  如 OpenAI (text-embedding-3-small)、SiliconFlow、DashScope 等。
 # ===================================================================
 app:
+  network:
+    public-access-enabled: ${APP_PUBLIC_ACCESS_ENABLED:false}
+    host-published-loopback: ${APP_HOST_PUBLISHED_LOOPBACK:false}
+  health:
+    readiness-cache-millis: ${APP_READINESS_CACHE_MILLIS:500}
+    readiness-max-stale-millis: ${APP_READINESS_MAX_STALE_MILLIS:5000}
   rag:
     # 模型供应方：auto（无 Key 时 mock）| mock | openai
     provider: ${APP_RAG_PROVIDER:auto}
     # DeepSeek Chat API 密钥（可设为环境变量 APP_RAG_CHAT_API_KEY）
-    chat-api-key: ''
+    chat-api-key: ${APP_RAG_CHAT_API_KEY:}
     # Chat 模型地址（支持任意 OpenAI 兼容 API）
-    chat-base-url: https://api.deepseek.com
+    chat-base-url: ${APP_RAG_CHAT_BASE_URL:https://api.deepseek.com}
     # Chat 模型名称
-    chat-model-name: deepseek-v4-flash
+    chat-model-name: ${APP_RAG_CHAT_MODEL_NAME:deepseek-v4-flash}
     # Embedding API 密钥（可设为环境变量 APP_RAG_EMBEDDING_API_KEY）
-    embedding-api-key: ''
+    embedding-api-key: ${APP_RAG_EMBEDDING_API_KEY:}
     # Embedding 模型地址 （支持任意 OpenAI 兼容 API，选用硅基流动的模型）
-    embedding-base-url: https://api.siliconflow.cn/v1
+    embedding-base-url: ${APP_RAG_EMBEDDING_BASE_URL:https://api.siliconflow.cn/v1}
     # Embedding 模型名称
-    embedding-model-name: BAAI/bge-large-zh-v1.5
+    embedding-model-name: ${APP_RAG_EMBEDDING_MODEL_NAME:BAAI/bge-large-zh-v1.5}
     # Rerank API 密钥（默认复用 Embedding key，可单独设置 APP_RAG_RERANK_API_KEY）
-    rerank-api-key: ${app.rag.embedding-api-key}
+    rerank-api-key: ${APP_RAG_RERANK_API_KEY:${app.rag.embedding-api-key}}
     # Rerank 模型地址
-    rerank-base-url: https://api.siliconflow.cn/v1
+    rerank-base-url: ${APP_RAG_RERANK_BASE_URL:https://api.siliconflow.cn/v1}
     # Rerank 模型名称
-    rerank-model-name: BAAI/bge-reranker-v2-m3
+    rerank-model-name: ${APP_RAG_RERANK_MODEL_NAME:BAAI/bge-reranker-v2-m3}
     # 向量检索分数阈值（≥此值的文档会进入 Rerank 阶段，建议 0.75-0.85），我写 0.77 是因为进过多次测试，效果比较好
-    score-threshold: 0.77
+    score-threshold: ${APP_RAG_SCORE_THRESHOLD:0.77}
     # 启动时自动扫描的文档目录
     document-scan-path: data/docs
+    inbox-path: data/inbox
+    auto-scan: ${APP_RAG_AUTO_SCAN:false}
+    embedding-batch-size: ${APP_RAG_EMBEDDING_BATCH_SIZE:10}
+    max-document-bytes: ${APP_RAG_MAX_DOCUMENT_BYTES:52428800}
+    max-extracted-characters: ${APP_RAG_MAX_EXTRACTED_CHARACTERS:2000000}
+    ingestion-lock-wait-seconds: ${APP_RAG_INGESTION_LOCK_WAIT_SECONDS:0}
+    ingestion-lock-lease-seconds: ${APP_RAG_INGESTION_LOCK_LEASE_SECONDS:300}
+    ingestion-stale-seconds: ${APP_RAG_INGESTION_STALE_SECONDS:600}
+    ingestion-recovery-interval-ms: ${APP_RAG_INGESTION_RECOVERY_INTERVAL_MS:30000}
+    ingestion-recovery-initial-delay-ms: ${APP_RAG_INGESTION_RECOVERY_INITIAL_DELAY_MS:5000}
+    ingestion-recovery-batch-size: ${APP_RAG_INGESTION_RECOVERY_BATCH_SIZE:100}
+    retrieval-top-k: ${APP_RAG_RETRIEVAL_TOP_K:20}
+    rerank-top-n: ${APP_RAG_RERANK_TOP_N:5}
+    prompt-max-characters: ${APP_RAG_PROMPT_MAX_CHARACTERS:12000}
+    stream-timeout-millis: ${APP_RAG_STREAM_TIMEOUT_MS:90000}
+    rewrite-history-max-characters: ${APP_RAG_REWRITE_HISTORY_MAX_CHARACTERS:4000}
+    rewrite-result-max-characters: ${APP_RAG_REWRITE_RESULT_MAX_CHARACTERS:500}
+    rerank-max-retries: ${APP_RAG_RERANK_MAX_RETRIES:2}
+    rerank-backoff-millis: ${APP_RAG_RERANK_BACKOFF_MS:100}
   # ===================================================================
   #  限流配置（通过注解影响 接口，支持热更新）
   #  可通过环境变量覆盖，如 APP_RATE_LIMIT_IP_RATE=10
   # ===================================================================
   rate-limit:
-    ip-rate: 20                            # IP 令牌桶容量及补充速率（次/分钟）
-    daily-max: 10000                       # 全局每日调用上限
+    ip-rate: ${APP_RATE_LIMIT_IP_RATE:60}  # IP 令牌桶容量及补充速率（次/分钟）
+    daily-max: ${APP_RATE_LIMIT_DAILY_MAX:10000} # 全局每日调用上限
+    trust-forwarded-for: ${APP_TRUST_FORWARDED_FOR:false}
   # 应用层 API Key（首期 · 生产建议开启）
   api-key:
     enabled: ${APP_API_KEY_ENABLED:false}
@@ -53,11 +80,39 @@ app:
   #  飞书文档同步
   # ===================================================================
   feishu:
-    app-id: ''
-    app-secret: ''
-    space-id: ''
-    cron: "0 0 */12 * * ?"                   # 定时任务执行时间 没半天跑一次（后续可改为xxl-job，这个项目只是供大家学习，没必要再加重框架结构了）
-    sync-enabled: false                    # 是否启用飞书文档同步功能
+    app-id: ${FEISHU_APP_ID:}
+    app-secret: ${FEISHU_APP_SECRET:}
+    space-id: ${FEISHU_REMOTE_SPACE_ID:}
+    local-space-id: ${FEISHU_LOCAL_SPACE_ID:1}
+    base-url: ${FEISHU_BASE_URL:https://open.feishu.cn}
+    cron: ${FEISHU_SYNC_CRON:0 0 */12 * * ?}
+    sync-enabled: ${FEISHU_SYNC_ENABLED:false}
+    connect-timeout-millis: ${FEISHU_CONNECT_TIMEOUT_MS:5000}
+    read-timeout-millis: ${FEISHU_READ_TIMEOUT_MS:15000}
+    write-timeout-millis: ${FEISHU_WRITE_TIMEOUT_MS:5000}
+    max-retries: ${FEISHU_MAX_RETRIES:3}
+    initial-backoff-millis: ${FEISHU_INITIAL_BACKOFF_MS:200}
+    min-request-interval-millis: ${FEISHU_MIN_REQUEST_INTERVAL_MS:0}
+    page-size: ${FEISHU_PAGE_SIZE:50}
+    max-pages: ${FEISHU_MAX_PAGES:1000}
+    missing-confirmations: ${FEISHU_MISSING_CONFIRMATIONS:2}
+    max-delete-count: ${FEISHU_MAX_DELETE_COUNT:10}
+    max-delete-ratio: ${FEISHU_MAX_DELETE_RATIO:0.25}
+    protect-zero-remote: ${FEISHU_PROTECT_ZERO_REMOTE:true}
+    lock-wait-seconds: ${FEISHU_LOCK_WAIT_SECONDS:0}
+    lock-lease-seconds: ${FEISHU_LOCK_LEASE_SECONDS:600}
+  vector:
+    collection-name: ${APP_VECTOR_COLLECTION:rag_study_helper_v2}
+    dimension: ${APP_VECTOR_DIMENSION:1024}
+    rebuild-on-start: ${APP_VECTOR_REBUILD_ON_START:false}
+    reconciliation:
+      enabled: ${APP_VECTOR_RECONCILIATION_ENABLED:true}
+      interval-millis: ${APP_VECTOR_RECONCILIATION_INTERVAL_MS:30000}
+      initial-delay-millis: ${APP_VECTOR_RECONCILIATION_INITIAL_DELAY_MS:15000}
+      batch-size: ${APP_VECTOR_RECONCILIATION_BATCH_SIZE:50}
+      max-attempts: ${APP_VECTOR_RECONCILIATION_MAX_ATTEMPTS:8}
+      base-backoff-seconds: ${APP_VECTOR_RECONCILIATION_BACKOFF_SECONDS:5}
+      lock-lease-seconds: ${APP_VECTOR_RECONCILIATION_LOCK_LEASE_SECONDS:60}
 
 # ===================================================================
 #  向量数据库配置（三选一）
@@ -66,7 +121,7 @@ app:
 # ===================================================================
 vector:
   store:
-    type: in-memory    # 可选值: in-memory | chroma | milvus
+    type: ${VECTOR_STORE_TYPE:in-memory}    # 可选值: in-memory | chroma | milvus
 
 # ----- InMemory（小项目/开发测试）-----
 # 进程内内存存储，无需任何外部服务
@@ -75,16 +130,16 @@ vector:
 
 # ----- Chroma（中型项目）-----
 chroma:
-  host: localhost                         # Chroma 服务地址
-  port: 8000                              # Chroma 服务端口
-  collection-name: rag_study_helper               # 集合名称
+  host: ${CHROMA_HOST:localhost}           # Chroma 服务地址
+  port: ${CHROMA_PORT:8000}               # Chroma 服务端口
+  collection-name: ${app.vector.collection-name}
 
 # ----- Milvus（大型/生产）-----
 milvus:
-  host: localhost                         # Milvus 服务地址
-  port: 19530                             # Milvus 服务端口
-  collection-name: rag_study_helper               # 集合名称
-  dimension: 1024                         # 向量维度（需与 embedding 模型匹配） text-embedding-3-small:1536  BAAI/bge-large-zh-v1.5:1024
+  host: ${MILVUS_HOST:localhost}           # Milvus 服务地址
+  port: ${MILVUS_PORT:19530}              # Milvus 服务端口
+  collection-name: ${app.vector.collection-name}
+  dimension: ${app.vector.dimension}
 
 # ===================================================================
 #  langchain4j配置
@@ -130,33 +185,61 @@ langchain4j:
 #  Redis 配置（用于对话上下文存储）
 # ===================================================================
 spring:
-  redis:
-    host: localhost
-    port: 6379
-    password: ''
-    timeout: 3000
-    lettuce:
-      pool:
-        max-active: 8
-        max-idle: 4
-        min-idle: 0
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:3}
+      timeout: 3000
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 4
+          min-idle: 0
 
-  # ===================================================================
-  #  MySQL 数据源配置（用于文档元数据存储）
-  # ===================================================================
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: 1
+    validate-on-migrate: true
+
   datasource:
-    url: jdbc:mysql://localhost:3306/rag_study_helper?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
-    username: root
-    password: ${SPRING_DATASOURCE_PASSWORD:root}
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/rag_study_helper?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true}
+    username: ${SPRING_DATASOURCE_USERNAME:rag}
+    password: ${SPRING_DATASOURCE_PASSWORD:rag-local-app-password}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
-      minimum-idle: 4
+      minimum-idle: 2
       maximum-pool-size: 12
+      connection-timeout: 5000
+      connection-init-sql: "SET time_zone = '${DB_SESSION_TIME_ZONE:+08:00}'"
+
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
 
   servlet:
     multipart:
-      max-file-size: 50MB                 # 单文件最大体积
-      max-request-size: 50MB              # 单次请求最大体积
+      max-file-size: 50MB
+      max-request-size: 50MB
+
+  jackson:
+    default-property-inclusion: non_null
+    time-zone: ${APP_TIME_ZONE:Asia/Shanghai}
+
+  application:
+    name: rag-study-helper
+
+  main:
+    banner-mode: off
+
+  task:
+    execution:
+      pool:
+        core-size: 2
+        max-size: 4
+        queue-capacity: 100
+
 
 # ===================================================================
 #  MyBatis-Plus 配置
@@ -170,3 +253,8 @@ mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
     log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+
+logging:
+  structured:
+    format:
+      console: ${LOG_STRUCTURED_FORMAT:ecs}

@@ -1,75 +1,68 @@
-# RAG Study Helper — 作品集演示指南
+# Mock 演示
 
-> Mock 模式内置 **Mock Chat + Mock Embedding + Mock Rerank**，无需 `APP_RAG_CHAT_API_KEY` / `APP_RAG_EMBEDDING_API_KEY` 即可走完 **入库 → 检索 → SSE 问答**。
+## 目标
 
----
+在不配置任何模型 Key 的情况下，复用 shared-infra 的持久化 Chroma、MySQL 和 Redis，完成：启动、目录扫描、异步入库、检索、SSE 回答、精确引用和会话回读。
 
-## 零密钥 Mock 演示（推荐）
+## 启动
 
-```bash
-cp .env.example .env    # 默认 APP_RAG_PROVIDER=mock
-./scripts/demo-mock.sh  # Windows: .\scripts\demo-mock.ps1
-```
-
-| 步骤 | 操作 | 预期 |
-| --- | --- | --- |
-| ✓ | `curl http://localhost:8080/api/health` | `"ragProvider":"mock"` |
-| ✓ | `curl http://localhost:8080/api/documents` | 至少 1 条内置演示文档 |
-| ✓ | Web UI 问：「RAG 中的向量检索是怎么工作的？」 | Mock 流式回答，含参考文档片段 |
-| ✓ | 知识库面板上传 `.md` | 上传成功后可基于新文档追问 |
-| ✓ | `node scripts/smoke-mock-demo.mjs` | 自动化 smoke 通过 |
-
-内置演示文档位于 `data/docs/`（启动时自动扫描入库）：
-
-- `rag-demo-overview.md` — RAG 概念与链路
-- `vector-retrieval-basics.md` — 向量检索与 Rerank
-- `query-rewrite-guide.md` — 查询改写与上传说明
-
----
-
-## 手动 smoke
-
-```bash
-docker compose up -d --build
-node scripts/smoke-mock-demo.mjs http://localhost:8080
-```
-
-上传验收（可选）：
-
-```bash
-curl -F "file=@data/docs/rag-demo-overview.md" http://localhost:8080/api/documents/upload
-```
-
----
-
-## 真实 LLM 演示（需 API Key）
-
-编辑 `.env`：
-
-```bash
-APP_RAG_PROVIDER=openai
-APP_RAG_CHAT_API_KEY=sk-...
-APP_RAG_EMBEDDING_API_KEY=sk-...
-```
-
-重启 compose 后使用相同 Web UI；Rerank 会调用 SiliconFlow BGE-reranker（或配置的兼容端点）。
-
----
-
-## Project Hub Profile
+Windows：
 
 ```powershell
-cd ai-portfolio/docker
-docker compose -f docker-compose.profiles.yml --profile rag-study-helper up -d --build
-node ../../rag-study-helper/scripts/smoke-mock-demo.mjs http://localhost:18086
+./scripts/demo-mock.ps1
 ```
 
-Hub 默认端口 **18086**（应用）· **18087**（Chroma）。Profile 已默认 `APP_RAG_PROVIDER=mock` 并挂载 `data/docs`。
+Linux/macOS：
 
----
+```bash
+./scripts/demo-mock.sh
+```
 
-## 相关文档
+首次构建通常需要 3-5 分钟；镜像网络较慢时会更久。严格 smoke 成功后才会显示入口地址。
 
-- [USAGE.md](../USAGE.md) — 日常操作
-- [DEPLOYMENT.md](../DEPLOYMENT.md) — 生产部署
-- [PERFORMANCE_REPORT.md](../PERFORMANCE_REPORT.md) — 压测（chat 默认不测，避免计费）
+## 页面路线
+
+1. 打开 `http://127.0.0.1:19050`，确认右上角显示 `MOCK 评估模式`。
+2. 选择 Default 空间，打开“资料与分块”。
+3. 内置演示资料已由 smoke 扫描；点击任一文档检查分块和完整正文。
+4. 回到“带引用问答”，提问“RAG 的核心流程是什么？”。
+5. 等待状态从检索、重排、生成进入完成，点击引用定位实际分块。
+6. 新建会话并追问“它为什么需要 Rerank？”，观察查询改写和服务端会话历史。
+7. 打开“任务与同步”，查看入库终态、向量  `active/indexed` 计数和飞书关闭状态。
+
+## 自动证明
+
+```bash
+node scripts/smoke-mock-demo.mjs http://127.0.0.1:19050
+```
+
+该命令不会把失败重试成重复写操作。它只在默认空间无文档时触发一次扫描，等待任务完成，再验证：
+
+- health/readiness 和 Mock provider；
+- 静态页面 CSP；
+- 至少一份已入库文档；
+- `status/retrieval/token/done` SSE 生命周期；
+- 每条检索来源包含 document/chunk ID；
+- 回答包含可落地引用；
+- Redis 会话包含一问一答；
+- 临时 smoke 会话已删除。
+
+任何断言失败都会非零退出并打印可处理原因。
+
+## 固定质量评估
+
+```bash
+node scripts/evaluate-mock.mjs \
+  --base-url http://127.0.0.1:19050 \
+  --out target/acceptance/evaluation.json
+```
+
+评估会创建独立的时间戳空间，上传 5 份固定资料并运行 27 个问题。空间保留用于检查和性能验收；需要清理时在页面确认后删除。
+
+## 停止
+
+```bash
+docker compose -f docker-compose-chroma.yml down
+```
+
+该命令只停止应用，不停止共享基础设施。即使附加 `-v` 也只删除本项目 inbox 卷，不会删除共享 MySQL、Redis 或 Chroma 数据。

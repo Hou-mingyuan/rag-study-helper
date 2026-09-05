@@ -4,152 +4,214 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rag.studyhelper.config.RagProviderResolver;
 import com.rag.studyhelper.mock.MockEmbeddingModel;
+import com.rag.studyhelper.model.RankedCandidate;
+import com.rag.studyhelper.model.RerankCandidate;
+import com.rag.studyhelper.model.RerankOutcome;
 import dev.langchain4j.data.segment.TextSegment;
-import okhttp3.*;
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.io.IOException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
-/**
- * 重排序 服务
- */
 @Service
 public class RerankService {
 
     private static final Logger log = LoggerFactory.getLogger(RerankService.class);
+    private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
 
-    private static final int TIMEOUT_MS = 60_000;
-
-    @Value("${langchain4j.open-ai.rerank-model.api-key}")
+    @Value("${langchain4j.open-ai.rerank-model.api-key:}")
     String apiKey;
 
-    @Value("${langchain4j.open-ai.rerank-model.base-url}")
+    @Value("${langchain4j.open-ai.rerank-model.base-url:}")
     String baseUrl;
 
-    @Value("${langchain4j.open-ai.rerank-model.model-name}")
+    @Value("${langchain4j.open-ai.rerank-model.model-name:}")
     String modelName;
+
+    @Value("${app.rag.rerank-max-retries:2}")
+    int maxRetries;
+
+    @Value("${app.rag.rerank-backoff-millis:100}")
+    long retryBackoffMillis;
+
+    @Autowired
+    private RagProviderResolver ragProviderResolver;
 
     private final OkHttpClient httpClient;
     private final ObjectMapper objectMapper;
 
     public RerankService() {
-        this.httpClient = createHttpClient();
-        this.objectMapper = new ObjectMapper();
+        this(new OkHttpClient.Builder()
+                .connectTimeout(5, TimeUnit.SECONDS)
+                .readTimeout(10, TimeUnit.SECONDS)
+                .writeTimeout(5, TimeUnit.SECONDS)
+                .build(), new ObjectMapper());
     }
 
-    private static OkHttpClient createHttpClient() {
-        return new OkHttpClient.Builder()
-                .connectTimeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
-                .readTimeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
-                .build();
+    RerankService(OkHttpClient httpClient, ObjectMapper objectMapper) {
+        this.httpClient = httpClient;
+        this.objectMapper = objectMapper;
     }
 
-    @Autowired
-    private RagProviderResolver ragProviderResolver;
-
-    /**
-     * 重排序
-     * 就是把你查的内容和从向量数据库得到的文档分片对比，把最先关的文档排前面
-     */
-    public List<TextSegment> rerank(String query, List<TextSegment> documents, int topN) {
-        if (documents.isEmpty()) {
-            return documents;
+    public RerankOutcome rerankCandidates(String query, List<RerankCandidate> candidates, int topN) {
+        if (candidates == null || candidates.isEmpty()) {
+            return new RerankOutcome(List.of(), "none", false, null);
         }
-
+        int limit = Math.min(Math.max(topN, 1), candidates.size());
         if (ragProviderResolver.isMockMode()) {
-            return mockRerank(query, documents, topN);
+            List<String> queryTokens = MockEmbeddingModel.tokenize(query);
+            List<RankedCandidate> ranked = candidates.stream()
+                    .map(candidate -> new RankedCandidate(candidate.id(), candidate.text(),
+                            candidate.retrievalScore(), mockScore(queryTokens, candidate.text())))
+                    .sorted(Comparator
+                            .comparingDouble((RankedCandidate candidate) -> candidate.rerankScore())
+                            .reversed()
+                            .thenComparing(Comparator
+                                    .comparingDouble(RankedCandidate::retrievalScore).reversed()))
+                    .limit(limit)
+                    .toList();
+            return new RerankOutcome(ranked, "mock", false, null);
         }
 
-        Map<String, Object> requestBody = new HashMap<>();
-        requestBody.put("model", modelName);
-        requestBody.put("query", query);
-        requestBody.put("documents", documents.stream()
-                .map(TextSegment::text)
-                .collect(Collectors.toList()));
-        requestBody.put("top_n", topN);
-
-        MediaType JSON = MediaType.parse("application/json; charset=utf-8");
-
         try {
-            String json = objectMapper.writeValueAsString(requestBody);
-            String url = baseUrl + "/rerank";
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("model", modelName);
+            payload.put("query", query);
+            payload.put("documents", candidates.stream().map(RerankCandidate::text).toList());
+            payload.put("top_n", limit);
             Request request = new Request.Builder()
-                    .url(url)
-                    .post(RequestBody.create(json, JSON))
+                    .url(stripTrailingSlash(baseUrl) + "/rerank")
                     .header("Authorization", "Bearer " + apiKey)
+                    .post(RequestBody.create(JSON, objectMapper.writeValueAsBytes(payload)))
                     .build();
-
-            log.info("Calling SiliconFlow Rerank: {} documents, query=\"{}\"", documents.size(), truncate(query, 50));
-            try (Response response = httpClient.newCall(request).execute()) {
-                String body = response.body() != null ? response.body().string() : "";
-                if (response.isSuccessful() && !body.isEmpty()) {
-                    return parseAndReorder(body, documents);
+            int attempts = Math.max(0, maxRetries) + 1;
+            for (int attempt = 0; attempt < attempts; attempt++) {
+                try (Response response = httpClient.newCall(request).execute()) {
+                    if (response.isSuccessful() && response.body() != null) {
+                        RerankOutcome parsed = parse(response.body().bytes(), candidates, limit);
+                        if (parsed != null) {
+                            return parsed;
+                        }
+                        return fallback(candidates, limit, "invalid response");
+                    }
+                    if (isRetryable(response.code()) && attempt + 1 < attempts) {
+                        waitBeforeRetry(response.header("Retry-After"), attempt);
+                        continue;
+                    }
+                    return fallback(candidates, limit, "HTTP " + response.code());
+                } catch (java.io.IOException error) {
+                    if (attempt + 1 >= attempts) {
+                        throw error;
+                    }
+                    waitBeforeRetry(null, attempt);
                 }
             }
-        } catch (Exception e) {
-            log.warn("Rerank API call failed, falling back to original order: {}", e.getMessage());
-        }
-
-        return documents;
-    }
-
-    private List<TextSegment> mockRerank(String query, List<TextSegment> documents, int topN) {
-        List<String> queryTokens = MockEmbeddingModel.tokenize(query);
-        return documents.stream()
-                .sorted((a, b) -> Integer.compare(
-                        overlapScore(queryTokens, b.text()),
-                        overlapScore(queryTokens, a.text())))
-                .limit(topN)
-                .collect(Collectors.toList());
-    }
-
-    private static int overlapScore(List<String> queryTokens, String document) {
-        List<String> docTokens = MockEmbeddingModel.tokenize(document);
-        int score = 0;
-        for (String token : queryTokens) {
-            if (docTokens.contains(token)) {
-                score += 1;
+            return fallback(candidates, limit, "retry exhausted");
+        } catch (Exception error) {
+            if (error instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
             }
-        }
-        return score;
-    }
-
-    /**
-     * 解析重排序的结果
-     */
-    private List<TextSegment> parseAndReorder(String responseBody, List<TextSegment> original) {
-        try {
-            JsonNode root = objectMapper.readTree(responseBody);
-            JsonNode results = root.get("results");
-            if (results == null || !results.isArray()) {
-                log.warn("Unexpected rerank response format: no 'results' array");
-                return original;
-            }
-
-            List<TextSegment> reranked = new ArrayList<>();
-            for (JsonNode result : results) {
-                int index = result.get("index").asInt();
-                if (index >= 0 && index < original.size()) {
-                    reranked.add(original.get(index));
-                }
-            }
-
-            log.info("Rerank returned {} results (from {} input)", reranked.size(), original.size());
-            return reranked;
-        } catch (Exception e) {
-            log.warn("Failed to parse rerank response, falling back: {}", e.getMessage());
-            return original;
+            log.warn("Rerank unavailable; retrieval order retained: {}",
+                    error.getClass().getSimpleName());
+            return fallback(candidates, limit, error.getClass().getSimpleName());
         }
     }
 
-    private static String truncate(String s, int maxLen) {
-        return s.length() <= maxLen ? s : s.substring(0, maxLen) + "...";
+    public List<TextSegment> rerank(String query, List<TextSegment> documents, int topN) {
+        List<RerankCandidate> candidates = new ArrayList<>(documents.size());
+        Map<String, TextSegment> byId = new HashMap<>();
+        for (int index = 0; index < documents.size(); index++) {
+            String id = String.valueOf(index);
+            candidates.add(new RerankCandidate(id, documents.get(index).text(), 0d));
+            byId.put(id, documents.get(index));
+        }
+        return rerankCandidates(query, candidates, topN).candidates().stream()
+                .map(candidate -> byId.get(candidate.id()))
+                .toList();
+    }
+
+    private RerankOutcome parse(byte[] responseBody, List<RerankCandidate> original, int limit)
+            throws java.io.IOException {
+        JsonNode results = objectMapper.readTree(responseBody).path("results");
+        if (!results.isArray()) {
+            return null;
+        }
+        List<RankedCandidate> ranked = new ArrayList<>();
+        Set<Integer> seen = new HashSet<>();
+        for (JsonNode item : results) {
+            int index = item.path("index").asInt(-1);
+            if (index < 0 || index >= original.size() || !seen.add(index)) {
+                continue;
+            }
+            RerankCandidate source = original.get(index);
+            ranked.add(new RankedCandidate(source.id(), source.text(), source.retrievalScore(),
+                    item.has("relevance_score") ? item.path("relevance_score").asDouble() : null));
+            if (ranked.size() == limit) {
+                break;
+            }
+        }
+        return ranked.isEmpty() ? null : new RerankOutcome(List.copyOf(ranked), "external", false, null);
+    }
+
+    private RerankOutcome fallback(List<RerankCandidate> candidates, int limit, String detail) {
+        List<RankedCandidate> ranked = candidates.stream().limit(limit)
+                .map(candidate -> new RankedCandidate(candidate.id(), candidate.text(),
+                        candidate.retrievalScore(), null))
+                .toList();
+        return new RerankOutcome(ranked, "fallback", true, detail);
+    }
+
+    private boolean isRetryable(int status) {
+        return status == 429 || status >= 500;
+    }
+
+    private void waitBeforeRetry(String retryAfter, int attempt) throws InterruptedException {
+        long delay = retryDelayMillis(retryAfter, attempt);
+        if (delay > 0) {
+            Thread.sleep(delay);
+        }
+    }
+
+    private long retryDelayMillis(String retryAfter, int attempt) {
+        if (retryAfter != null) {
+            try {
+                return Math.min(Long.parseLong(retryAfter.trim()) * 1000L, 5_000L);
+            } catch (NumberFormatException ignored) {
+                // Fall through to the bounded exponential delay.
+            }
+        }
+        long base = Math.max(0L, retryBackoffMillis);
+        return Math.min(base * (1L << Math.min(attempt, 5)), 5_000L);
+    }
+
+    private double mockScore(List<String> queryTokens, String document) {
+        if (queryTokens.isEmpty()) {
+            return 0d;
+        }
+        List<String> documentTokens = MockEmbeddingModel.tokenize(document);
+        long overlap = queryTokens.stream().filter(documentTokens::contains).distinct().count();
+        return (double) overlap / queryTokens.stream().distinct().count();
+    }
+
+    private String stripTrailingSlash(String value) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalStateException("Rerank base URL is not configured");
+        }
+        return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
     }
 }

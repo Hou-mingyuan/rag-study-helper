@@ -7,14 +7,14 @@ import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.redisson.api.RateIntervalUnit;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 
 /**
  * 限流切面。
@@ -29,16 +29,22 @@ import javax.servlet.http.HttpServletResponse;
 @Component
 public class RateLimitAspect {
 
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private final RateLimitService rateLimitService;
+    private final ObjectMapper objectMapper;
 
-    @Autowired
-    private RateLimitService rateLimitService;
+    public RateLimitAspect(RateLimitService rateLimitService, ObjectMapper objectMapper) {
+        this.rateLimitService = rateLimitService;
+        this.objectMapper = objectMapper;
+    }
 
     @Value("${app.rate-limit.ip-rate:20}")
     private int ipRate;
 
     @Value("${app.rate-limit.daily-max:10000}")
     private int dailyMax;
+
+    @Value("${app.rate-limit.trust-forwarded-for:false}")
+    private boolean trustForwardedFor;
 
     /**
      * 聊天接口限流
@@ -54,16 +60,21 @@ public class RateLimitAspect {
 
         String key = ipRateLimit.value();
 
-        // 1. 全局每日限流
-        if (!rateLimitService.tryDaily(key, dailyMax)) {
-            writeRateLimitResponse(response, "今日调用次数已达上限");
-            return null;
-        }
-
-        // 2. IP 令牌桶限流
-        String clientIp = getClientIp(request);
-        if (!rateLimitService.tryAcquire("ip:" +  key + ":" + clientIp, ipRate)) {
-            writeRateLimitResponse(response, "请求过于频繁，请稍后再试");
+        try {
+            String clientIp = getClientIp(request);
+            if (!rateLimitService.tryAcquire("ip:" + key + ":" + clientIp, ipRate)) {
+                writeResponse(response, HttpStatus.TOO_MANY_REQUESTS.value(),
+                        "429", "请求过于频繁，请稍后再试");
+                return null;
+            }
+            if (dailyMax > 0 && !rateLimitService.tryDaily(key, dailyMax)) {
+                writeResponse(response, HttpStatus.TOO_MANY_REQUESTS.value(),
+                        "429", "今日调用次数已达上限");
+                return null;
+            }
+        } catch (RuntimeException unavailable) {
+            writeResponse(response, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
+                    "503", "限流依赖暂时不可用");
             return null;
         }
 
@@ -89,17 +100,26 @@ public class RateLimitAspect {
         long timeOutOfHours = rateLimit.timeOutOfHours();
         int dailyMaximumCount = rateLimit.dailyMaximumCount();
 
-        if (dailyMaximumCount != 0) {
-            // 全局每日限流
-            if (!rateLimitService.tryDaily(key, dailyMaximumCount)) {
-                writeRateLimitResponse(response, "今日调用次数已达上限");
+        try {
+            if (dailyMaximumCount != 0) {
+                // 全局每日限流
+                if (!rateLimitService.tryDaily(key, dailyMaximumCount)) {
+                    writeResponse(response, HttpStatus.TOO_MANY_REQUESTS.value(),
+                            "429", "今日调用次数已达上限");
+                    return null;
+                }
+            }
+
+            // 令牌桶限流
+            if (!rateLimitService.tryAcquire(key, count, supplementTime,
+                    rateIntervalUnit, timeOutOfHours)) {
+                writeResponse(response, HttpStatus.TOO_MANY_REQUESTS.value(),
+                        "429", "请求过于频繁，请稍后再试");
                 return null;
             }
-        }
-
-        // 令牌桶限流
-        if (!rateLimitService.tryAcquire(key, count, supplementTime, rateIntervalUnit, timeOutOfHours)) {
-            writeRateLimitResponse(response, "请求过于频繁，请稍后再试");
+        } catch (RuntimeException unavailable) {
+            writeResponse(response, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
+                    "503", "限流依赖暂时不可用");
             return null;
         }
 
@@ -109,18 +129,21 @@ public class RateLimitAspect {
 
     // 获取IP
     private String getClientIp(HttpServletRequest request) {
-        String xff = request.getHeader("X-Forwarded-For");
-        if (xff != null && !xff.isEmpty() && !"unknown".equalsIgnoreCase(xff)) {
+        String xff = trustForwardedFor ? request.getHeader("X-Forwarded-For") : null;
+        if (xff != null && !xff.isBlank() && !"unknown".equalsIgnoreCase(xff)) {
             return xff.split(",")[0].trim();
         }
         return request.getRemoteAddr();
     }
 
     // 响应限流报错信息
-    private void writeRateLimitResponse(HttpServletResponse response, String msg) throws Exception {
-        response.setStatus(HttpServletResponse.SC_OK);
+    private void writeResponse(HttpServletResponse response, int status,
+                               String code, String msg) throws Exception {
+        response.setStatus(status);
+        response.setHeader("Retry-After", "60");
+        response.setCharacterEncoding(java.nio.charset.StandardCharsets.UTF_8.name());
         response.setContentType("application/json;charset=UTF-8");
-        Results<Void> result = Results.failed("429", msg);
-        response.getWriter().write(OBJECT_MAPPER.writeValueAsString(result));
+        Results<Void> result = Results.failed(code, msg);
+        response.getWriter().write(objectMapper.writeValueAsString(result));
     }
 }

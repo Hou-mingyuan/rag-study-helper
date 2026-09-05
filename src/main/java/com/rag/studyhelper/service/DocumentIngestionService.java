@@ -1,484 +1,633 @@
 package com.rag.studyhelper.service;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.rag.studyhelper.ingestion.ActivationResult;
+import com.rag.studyhelper.ingestion.ChunkDraft;
+import com.rag.studyhelper.ingestion.DocumentDescriptor;
+import com.rag.studyhelper.ingestion.IndexStage;
+import com.rag.studyhelper.ingestion.IngestionCancelledException;
+import com.rag.studyhelper.ingestion.IngestionControl;
+import com.rag.studyhelper.ingestion.IngestionLockCoordinator;
+import com.rag.studyhelper.ingestion.IngestionPersistence;
 import com.rag.studyhelper.mapper.DocumentChunksMapper;
 import com.rag.studyhelper.mapper.DocumentsMapper;
-import com.rag.studyhelper.model.DocumentChunks;
 import com.rag.studyhelper.model.ChunkPreview;
+import com.rag.studyhelper.model.ChunkDetail;
+import com.rag.studyhelper.model.DocumentChunks;
 import com.rag.studyhelper.model.DocumentInfo;
 import com.rag.studyhelper.model.Documents;
+import com.rag.studyhelper.utils.Hashing;
+import com.rag.studyhelper.vector.EmbeddingGateway;
+import com.rag.studyhelper.vector.VectorEntry;
+import com.rag.studyhelper.vector.VectorIndexManager;
+import com.rag.studyhelper.vector.VectorStoreGateway;
 import dev.langchain4j.data.document.Document;
 import dev.langchain4j.data.document.DocumentSplitter;
 import dev.langchain4j.data.document.parser.TextDocumentParser;
 import dev.langchain4j.data.document.parser.apache.pdfbox.ApachePdfBoxDocumentParser;
-import dev.langchain4j.data.document.splitter.DocumentByParagraphSplitter;
 import dev.langchain4j.data.document.splitter.DocumentSplitters;
-import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
-import dev.langchain4j.model.Tokenizer;
-import dev.langchain4j.model.embedding.EmbeddingModel;
+import dev.langchain4j.model.TokenCountEstimator;
 import dev.langchain4j.model.openai.OpenAiChatModelName;
-import dev.langchain4j.model.openai.OpenAiTokenizer;
-import dev.langchain4j.store.embedding.EmbeddingStore;
-import org.apache.commons.io.IOUtils;
+import dev.langchain4j.model.openai.OpenAiTokenCountEstimator;
+import jakarta.annotation.PostConstruct;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.DateUtil;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.ss.usermodel.WorkbookFactory;
 import org.apache.poi.xslf.usermodel.XMLSlideShow;
-import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
-import org.codehaus.plexus.util.StringUtils;
 import org.jsoup.Jsoup;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import javax.annotation.PostConstruct;
-import java.io.*;
+import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Path;
-import java.security.MessageDigest;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.stream.Collectors;
+import java.util.Locale;
+import java.util.Map;
 
-/**
- * 文档处理服务
- * 包括 文档解析、向量化、入库（向量数据库 + 关系型数据库）
- */
 @Service
 public class DocumentIngestionService {
 
     private static final Logger log = LoggerFactory.getLogger(DocumentIngestionService.class);
+    private static final int MAX_SEGMENT_TOKENS = 512;
+    private static final int SEGMENT_OVERLAP_TOKENS = 64;
+    private static final int PREVIEW_MAX_CHARS = 420;
 
-    @Autowired
-    private EmbeddingStore<TextSegment> embeddingStore;
+    private final IngestionPersistence persistence;
+    private final IngestionLockCoordinator ingestionLocks;
+    private final EmbeddingGateway embeddingGateway;
+    private final VectorStoreGateway vectorStore;
+    private final VectorIndexManager vectorIndexManager;
+    private final DocumentsMapper documentsMapper;
+    private final DocumentChunksMapper chunksMapper;
+    private final KnowledgeSpaceService spaceService;
+    private final TokenCountEstimator tokenEstimator =
+            new OpenAiTokenCountEstimator(OpenAiChatModelName.GPT_3_5_TURBO);
 
-    @Autowired
-    private EmbeddingModel embeddingModel;
-
-    @Autowired
-    private DocumentsMapper documentsMapper;
-
-    @Autowired
-    private DocumentChunksMapper documentChunksMapper;
-
-    @Value("${app.rag.document-scan-path}")
+    @Value("${app.rag.document-scan-path:data/docs}")
     private String scanPath;
 
-    // 初始化用于跑本地文档
+    @Value("${app.rag.auto-scan:false}")
+    private boolean autoScan;
+
+    @Value("${app.rag.embedding-batch-size:10}")
+    private int embeddingBatchSize;
+
+    @Value("${app.rag.max-document-bytes:52428800}")
+    private long maxDocumentBytes = 52_428_800L;
+
+    @Value("${app.rag.max-extracted-characters:2000000}")
+    private int maxExtractedCharacters = 2_000_000;
+
+    public DocumentIngestionService(IngestionPersistence persistence,
+                                    IngestionLockCoordinator ingestionLocks,
+                                    EmbeddingGateway embeddingGateway,
+                                    VectorStoreGateway vectorStore,
+                                    VectorIndexManager vectorIndexManager,
+                                    DocumentsMapper documentsMapper,
+                                    DocumentChunksMapper chunksMapper,
+                                    KnowledgeSpaceService spaceService) {
+        this.persistence = persistence;
+        this.ingestionLocks = ingestionLocks;
+        this.embeddingGateway = embeddingGateway;
+        this.vectorStore = vectorStore;
+        this.vectorIndexManager = vectorIndexManager;
+        this.documentsMapper = documentsMapper;
+        this.chunksMapper = chunksMapper;
+        this.spaceService = spaceService;
+    }
+
     @PostConstruct
-    public void init() {
-        scanAndIngest();
-    }
-
-    /**
-     * 判断文件内容是否已经入库，通过hash判断文件一致性
-     */
-    private String sha256(byte[] input) {
-        try {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] hash = md.digest(input);
-            StringBuilder hex = new StringBuilder();
-            for (byte b : hash) {
-                hex.append(String.format("%02x", b));
-            }
-            return hex.toString();
-        } catch (Exception e) {
-            throw new RuntimeException("SHA-256 not available", e);
+    public void initializeOptionalScan() {
+        if (autoScan) {
+            scanAndIngest(KnowledgeSpaceService.DEFAULT_SPACE_ID);
         }
     }
 
-    /**
-     * 扫描目录下所有文件，并解析入库
-     */
     public List<DocumentInfo> scanAndIngest() {
-        log.info("Scanning document directory: {}", scanPath);
-        List<DocumentInfo> results = new ArrayList<>();
-        File dir = new File(scanPath);
-        if (!dir.exists()) {
-            dir.mkdirs();
-            log.info("Created document directory: {}", scanPath);
-            return results;
+        return scanAndIngest(KnowledgeSpaceService.DEFAULT_SPACE_ID);
+    }
+
+    public List<DocumentInfo> scanAndIngest(long spaceId) {
+        spaceService.requireActive(spaceId);
+        File directory = new File(scanPath);
+        if (!directory.exists() && !directory.mkdirs()) {
+            throw new IllegalStateException("Cannot create document scan directory");
         }
-        File[] files = dir.listFiles((d, name) -> {
-            String n = name.toLowerCase();
-            return n.endsWith(".txt") || n.endsWith(".md") || n.endsWith(".csv")
-                    || n.endsWith(".json") || n.endsWith(".xml")
-                    || n.endsWith(".pdf")
-                    || n.endsWith(".xlsx") || n.endsWith(".xls")
-                    || n.endsWith(".docx")
-                    || n.endsWith(".pptx")
-                    || n.endsWith(".html") || n.endsWith(".htm");
-        });
-        if (files == null || files.length == 0) {
-            log.info("No documents found in {}", scanPath);
+        File[] files = directory.listFiles((dir, name) -> isSupported(name));
+        List<DocumentInfo> results = new ArrayList<>();
+        if (files == null) {
             return results;
         }
         for (File file : files) {
-            try {
-                DocumentInfo info = ingestDocument(file.toPath());
-                results.add(info);
-            } catch (Exception e) {
-                log.error("Failed to ingest document: {}", file.getName(), e);
+            try (InputStream input = new FileInputStream(file)) {
+                results.add(ingestBytes(spaceId, file.getName(), null, input, "SCAN",
+                        file.toPath().toAbsolutePath().normalize().toString(), null));
+            } catch (Exception error) {
+                log.error("Document scan item failed: name={}", file.getName(), error);
             }
         }
-        log.info("Document scan complete. Total ingested: {}", results.size());
         return results;
     }
 
-    /**
-     * 通过文件路径直接解析文档入库
-     */
     public DocumentInfo ingestDocument(Path filePath) throws IOException {
-        String fileName = filePath.getFileName().toString();
-        try (InputStream inputStream = new FileInputStream(filePath.toFile())) {
-            return ingestDocument(fileName, inputStream);
+        try (InputStream input = new FileInputStream(filePath.toFile())) {
+            return ingestBytes(KnowledgeSpaceService.DEFAULT_SPACE_ID, filePath.getFileName().toString(),
+                    null, input, "UPLOAD", filePath.toAbsolutePath().normalize().toString(), null);
         }
     }
 
-    /**
-     * 通过输入流直接解析文档入库
-     */
     public DocumentInfo ingestDocument(String fileName, InputStream inputStream) throws IOException {
-        byte[] content = IOUtils.toByteArray(inputStream);
-        String hash = sha256(content);
-        log.info("Ingesting document: {}, hash={}", fileName, hash);
+        return ingestDocument(KnowledgeSpaceService.DEFAULT_SPACE_ID, fileName, null, inputStream);
+    }
 
-        // 检查文件是否已经入库
-        Documents existing = documentsMapper.selectOne(
-                Wrappers.<Documents>lambdaQuery().eq(Documents::getContentHash, hash)
-        );
-        if (existing != null) {
-            log.info("Document already ingested: {} (hash={})", existing.getDocumentName(), hash);
+    public DocumentInfo ingestDocument(long spaceId, String fileName, String mimeType,
+                                       InputStream inputStream) throws IOException {
+        return ingestDocument(spaceId, fileName, mimeType, inputStream, IngestionControl.NONE);
+    }
+
+    public DocumentInfo ingestDocument(long spaceId, String fileName, String mimeType,
+                                       InputStream inputStream, IngestionControl control) throws IOException {
+        return ingestBytes(spaceId, fileName, mimeType, inputStream, "UPLOAD", null, null, control);
+    }
+
+    public DocumentInfo ingestScannedDocument(long spaceId, Path path,
+                                              IngestionControl control) throws IOException {
+        try (InputStream input = new FileInputStream(path.toFile())) {
+            return ingestBytes(spaceId, path.getFileName().toString(), null, input, "SCAN",
+                    path.toAbsolutePath().normalize().toString(), null, control);
+        }
+    }
+
+    public DocumentInfo ingestDocument(String fileName, String content) throws IOException {
+        byte[] bytes = content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        return ingestParsed(new DocumentDescriptor(
+                        KnowledgeSpaceService.DEFAULT_SPACE_ID,
+                        sanitizeFileName(fileName), extension(fileName), "text/plain", "UPLOAD",
+                        Hashing.sha256(bytes), bytes.length, null,
+                        null, null, null, 0L, "system"),
+                Document.from(content), IngestionControl.NONE);
+    }
+
+    public DocumentInfo ingestFeishuDocument(String fileName, String content,
+                                             String nodeToken, long updateTime,
+                                             String objType) throws IOException {
+        return ingestFeishuDocument(KnowledgeSpaceService.DEFAULT_SPACE_ID, "default",
+                fileName, content, nodeToken, updateTime, objType);
+    }
+
+    public DocumentInfo ingestFeishuDocument(long spaceId, String remoteSpaceId,
+                                             String fileName, String content,
+                                             String nodeToken, long updateTime,
+                                             String objType) throws IOException {
+        spaceService.requireActive(spaceId);
+        byte[] bytes = content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        DocumentDescriptor descriptor = new DocumentDescriptor(
+                spaceId, sanitizeFileName(fileName), objType, "text/plain", "FEISHU",
+                Hashing.sha256(bytes), bytes.length, null,
+                remoteSpaceId, nodeToken, objType, updateTime, "feishu");
+        return ingestParsed(descriptor, Document.from(content), IngestionControl.NONE);
+    }
+
+    private DocumentInfo ingestBytes(long spaceId, String fileName, String mimeType,
+                                     InputStream inputStream, String source,
+                                     String originalPath, String creator) throws IOException {
+        return ingestBytes(spaceId, fileName, mimeType, inputStream, source, originalPath,
+                creator, IngestionControl.NONE);
+    }
+
+    private DocumentInfo ingestBytes(long spaceId, String fileName, String mimeType,
+                                     InputStream inputStream, String source,
+                                     String originalPath, String creator,
+                                     IngestionControl control) throws IOException {
+        spaceService.requireActive(spaceId);
+        checkCancelled(control);
+        String safeName = sanitizeFileName(fileName);
+        if (!isSupported(safeName)) {
+            throw new IllegalArgumentException("Unsupported document type: " + extension(safeName));
+        }
+        int byteLimit = (int) Math.min(Math.max(1L, maxDocumentBytes), Integer.MAX_VALUE - 1L);
+        byte[] content = inputStream.readNBytes(byteLimit + 1);
+        if (content.length > byteLimit) {
+            throw new IllegalArgumentException("Document exceeds the configured size limit");
+        }
+        if (content.length == 0) {
+            throw new IllegalArgumentException("Document is empty");
+        }
+        Document document = parseDocument(safeName, new ByteArrayInputStream(content));
+        control.progress("PARSING", 1, 4);
+        checkCancelled(control);
+        DocumentDescriptor descriptor = new DocumentDescriptor(
+                spaceId, safeName, extension(safeName), mimeType, source,
+                Hashing.sha256(content), content.length, originalPath,
+                null, null, null, 0L, creator == null ? "local" : creator);
+        return ingestParsed(descriptor, document, control);
+    }
+
+    private DocumentInfo ingestParsed(DocumentDescriptor descriptor, Document document,
+                                      IngestionControl control) throws IOException {
+        try (IngestionLockCoordinator.Lease ignored = ingestionLocks.acquire(descriptor)) {
+            return ingestParsedLocked(descriptor, document, control);
+        }
+    }
+
+    private DocumentInfo ingestParsedLocked(DocumentDescriptor descriptor, Document document,
+                                            IngestionControl control) throws IOException {
+        validateExtractedText(document);
+        List<ChunkDraft> drafts = split(document);
+        if (drafts.isEmpty()) {
+            throw new IllegalArgumentException("Document contains no indexable text");
+        }
+
+        IndexStage stage = persistence.stage(descriptor, drafts);
+        control.progress("STAGED", 2, 4);
+        if (stage.duplicate()) {
+            Documents existing = stage.document();
             return new DocumentInfo(existing.getId(), existing.getDocumentName(), existing.getChunkCount());
         }
 
-        // 解析文档
-        Document document = parseDocument(fileName, new ByteArrayInputStream(content));
-        // 入库（向量数据库 + 关系型数据库）
-        return processAndSave(document, fileName, "UPLOAD", hash, (long) content.length,
-                null, null, null, "upload");
-    }
+        List<String> attemptedVectorIds = new ArrayList<>();
+        try {
+            int batchSize = Math.max(1, Math.min(embeddingBatchSize, 100));
+            int batchCount = (stage.chunks().size() + batchSize - 1) / batchSize;
+            for (int offset = 0; offset < stage.chunks().size(); offset += batchSize) {
+                checkCancelled(control);
+                int end = Math.min(stage.chunks().size(), offset + batchSize);
+                List<DocumentChunks> batch = stage.chunks().subList(offset, end);
+                List<float[]> vectors = embeddingGateway.embedAll(
+                        batch.stream().map(DocumentChunks::getChunkText).toList());
+                List<VectorEntry> entries = new ArrayList<>(batch.size());
+                for (int index = 0; index < batch.size(); index++) {
+                    DocumentChunks chunk = batch.get(index);
+                    attemptedVectorIds.add(chunk.getVectorId());
+                    entries.add(new VectorEntry(chunk.getVectorId(), vectors.get(index),
+                            chunk.getChunkText(), vectorMetadata(descriptor, chunk)));
+                }
+                vectorStore.upsert(entries);
+                control.progress("INDEXING", 2 + (offset / batchSize) + 1, batchCount + 3);
+            }
 
-    /**
-     * 直接传入文档文本内容入库。适用于飞书等文本来源。
-     */
-    public DocumentInfo ingestDocument(String fileName, String content) throws IOException {
-        Document document = Document.from(content);
-        return processAndSave(document, fileName, null, null, null,
-                null, null, null, "system");
-    }
-
-    /**
-     * 飞书文档入库（携带飞书元数据）。
-     */
-    public DocumentInfo ingestFeishuDocument(String fileName, String content,
-                                             String nodeToken, long updateTime, String objType) throws IOException {
-        Document document = Document.from(content);
-        return processAndSave(document, fileName, "FEISHU", null, null,
-                nodeToken, objType, updateTime, "system");
-    }
-
-    /**
-     * 解析文档
-     */
-    private Document parseDocument(String fileName, InputStream inputStream) throws IOException {
-        String lower = fileName.toLowerCase();
-        if (lower.endsWith(".pdf")) {
-            return new ApachePdfBoxDocumentParser().parse(inputStream);
-        } else if (lower.endsWith(".txt") || lower.endsWith(".md")
-                || lower.endsWith(".csv") || lower.endsWith(".json")
-                || lower.endsWith(".xml")) {
-            return new TextDocumentParser().parse(inputStream);
-        } else if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
-            return parseExcel(inputStream);
-        } else if (lower.endsWith(".docx")) {
-            return parseWord(inputStream);
-        } else if (lower.endsWith(".pptx")) {
-            return parsePowerPoint(inputStream);
-        } else if (lower.endsWith(".html") || lower.endsWith(".htm")) {
-            return parseHtml(inputStream);
-        } else {
-            throw new IllegalArgumentException("Unsupported file: " + fileName);
+            checkCancelled(control);
+            ActivationResult activated = persistence.activate(stage);
+            control.progress("COMPLETED", batchCount + 3, batchCount + 3);
+            cleanupStaleVectors(descriptor.spaceId(), stage.document().getId(), activated.staleVectorIds());
+            refreshVectorMetadata();
+            log.info("Document indexed: spaceId={}, documentId={}, version={}, chunks={}",
+                    descriptor.spaceId(), stage.document().getId(), stage.version().getVersionNumber(),
+                    stage.chunks().size());
+            return activated.document();
+        } catch (Exception error) {
+            boolean cancelled = error instanceof IngestionCancelledException;
+            compensateFailedIndex(descriptor.spaceId(), stage, attemptedVectorIds, error, cancelled);
+            if (cancelled) {
+                throw (IngestionCancelledException) error;
+            }
+            if (error instanceof IOException ioError) {
+                throw ioError;
+            }
+            throw new IOException("Document indexing failed", error);
         }
     }
 
-    /**
-     * 入库主流程
-     */
-    private DocumentInfo processAndSave(Document document, String fileName, String source,
-                                        String contentHash, Long fileSize,
-                                        String feishuNodeToken, String feishuObjType,
-                                        Long feishuUpdateTime, String creator) throws IOException {
-        Tokenizer tokenizer = new OpenAiTokenizer(OpenAiChatModelName.GPT_3_5_TURBO);
-        String prefix = "[来源:" + fileName + "]\n";
-        int prefixTokenCount = tokenizer.estimateTokenCountInText(prefix);
-        if (prefixTokenCount > 200) {
-            log.warn("文件名前缀占用 token 过多: {} tokens, fileName={}", prefixTokenCount, fileName);
+    private void compensateFailedIndex(long spaceId, IndexStage stage,
+                                       List<String> attemptedVectorIds, Exception indexingError,
+                                       boolean cancelled) {
+        try {
+            vectorStore.delete(attemptedVectorIds);
+        } catch (Exception cleanupError) {
+            persistence.enqueueDeletes(spaceId, stage.document().getId(), attemptedVectorIds, cleanupError);
+            indexingError.addSuppressed(cleanupError);
+        } finally {
+            persistence.fail(stage, indexingError.getMessage(), cancelled);
         }
+    }
 
-        // bge-large-zh-v1.5 的上限为 512 token （虽然 bge-large-zh-v1.5 上限低，但他在硅基流动上是免费的，而且能力也不错）
-        // 如果切换模型后，那么向量数据库中记录的数据都不可用了，要注意哦
-        int maxSegmentSize = Math.max(50, 512 - prefixTokenCount);
-        int maxOverlap = 51;
-        // 基于 token 的分割器，层级降级（官方推荐）
+    private void checkCancelled(IngestionControl control) {
+        if (control != null && control.isCancellationRequested()) {
+            throw new IngestionCancelledException();
+        }
+    }
+
+    private void cleanupStaleVectors(long spaceId, long documentId, List<String> staleIds) {
+        try {
+            vectorStore.delete(staleIds);
+        } catch (Exception error) {
+            persistence.enqueueDeletes(spaceId, documentId, staleIds, error);
+            log.warn("Stale vector cleanup queued: spaceId={}, documentId={}, count={}",
+                    spaceId, documentId, staleIds.size());
+        }
+    }
+
+    private void refreshVectorMetadata() {
+        try {
+            vectorIndexManager.refreshEntryCount();
+        } catch (RuntimeException error) {
+            log.warn("Vector index metadata refresh deferred: errorType={}",
+                    error.getClass().getSimpleName());
+        }
+    }
+
+    private Map<String, Object> vectorMetadata(DocumentDescriptor descriptor, DocumentChunks chunk) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("spaceId", descriptor.spaceId());
+        metadata.put("documentId", chunk.getDocumentId());
+        metadata.put("documentVersion", chunk.getDocumentVersion());
+        metadata.put("chunkId", chunk.getId());
+        metadata.put("chunkIndex", chunk.getChunkIndex());
+        metadata.put("documentName", descriptor.documentName());
+        metadata.put("source", descriptor.source());
+        if (chunk.getSectionTitle() != null) {
+            metadata.put("section", chunk.getSectionTitle());
+        }
+        if (chunk.getPageNumber() != null) {
+            metadata.put("page", chunk.getPageNumber());
+        }
+        return metadata;
+    }
+
+    private List<ChunkDraft> split(Document document) {
+        String fullText = document.text() == null ? "" : document.text();
+        if (fullText.isBlank()) {
+            return List.of();
+        }
         DocumentSplitter splitter = DocumentSplitters.recursive(
-                // maxSegmentSize: 每个分段最大token数
-                maxSegmentSize,
-                // maxOverlap: 段落间重叠token数
-                maxOverlap,
-                // separator 优先级
-                tokenizer
-        );
+                MAX_SEGMENT_TOKENS, SEGMENT_OVERLAP_TOKENS, tokenEstimator);
         List<TextSegment> segments = splitter.split(document);
+        List<ChunkDraft> drafts = new ArrayList<>(segments.size());
+        int cursor = 0;
+        for (int index = 0; index < segments.size(); index++) {
+            TextSegment segment = segments.get(index);
+            String text = segment.text().trim();
+            if (text.isEmpty()) {
+                continue;
+            }
+            int start = fullText.indexOf(text, Math.max(0, cursor - 256));
+            if (start < 0) {
+                start = cursor;
+            }
+            int end = Math.min(fullText.length(), start + text.length());
+            cursor = end;
+            drafts.add(new ChunkDraft(
+                    drafts.size(), text, Hashing.sha256(text), inferSection(text),
+                    metadataInteger(segment, "page_number", "pageNumber", "page"),
+                    start, end, tokenEstimator.estimateTokenCountInText(text)));
+        }
+        return drafts;
+    }
 
-        segments.replaceAll(textSegment -> TextSegment.from(
-                prefix + textSegment.text()));
+    private void validateExtractedText(Document document) {
+        String text = document == null ? null : document.text();
+        if (text != null && text.length() > Math.max(1, maxExtractedCharacters)) {
+            throw new IllegalArgumentException("Extracted document text exceeds the configured limit");
+        }
+    }
 
-//        todo 权限 rag 新增 仅 chroma 和 milvus 使用 如果是 私有文档，使用 .put("document_id", docRecord.getId())))
-//        Metadata 的内容不会被送入 Embedding 模型，因此不消耗模型的 token 额度。
-//        segments.replaceAll(textSegment -> TextSegment.from(
-//                "[来源:" + fileName + "]\n" + textSegment.text(),
-//                new Metadata()
-//                        .put("visibility", "public")));
-
-        List<Embedding> allEmbeddings = new ArrayList<>();
-        // 记录嵌入成功的文本段，保证与 allEmbeddings 一一对应，避免失败时错位
-        List<TextSegment> successSegments = new ArrayList<>();
-        // 一次 http 请求 10 条，避免反复建立连接增大开销
-        int batchSize = 10;
-        for (int i = 0; i < segments.size(); i += batchSize) {
-            int end = Math.min(i + batchSize, segments.size());
-            List<TextSegment> batch = segments.subList(i, end);
-            try {
-                List<Embedding> embeddings = embeddingModel.embedAll(batch).content();
-                allEmbeddings.addAll(embeddings);
-                successSegments.addAll(batch);
-                log.info("  Embedded batch {}-{}/{}", i, end, segments.size());
-            } catch (Exception e) {
-                log.warn("  Batch {}-{} failed, trying one-by-one", i, end);
-                for (TextSegment seg : batch) {
-                    try {
-                        allEmbeddings.add(embeddingModel.embed(seg.text()).content());
-                        successSegments.add(seg);
-                    } catch (Exception e2) {
-                        log.warn("  Skipping chunk: {}", seg.text().substring(0, Math.min(50, seg.text().length())));
-                    }
+    private Integer metadataInteger(TextSegment segment, String... keys) {
+        for (String key : keys) {
+            if (segment.metadata().containsKey(key)) {
+                try {
+                    return segment.metadata().getInteger(key);
+                } catch (RuntimeException ignored) {
+                    // Try the next compatible metadata key.
                 }
             }
         }
-
-        // 向量 ID 后面方便删除
-        List<String> vectorIds = embeddingStore.addAll(allEmbeddings, successSegments);
-
-        String docType = "unknown";
-        int dotIdx = fileName.lastIndexOf('.');
-        if (dotIdx > 0) {
-            docType = fileName.substring(dotIdx + 1).toLowerCase();
-        }
-
-        // 文档入库
-        Documents docRecord = new Documents();
-        docRecord.setDocumentName(fileName);
-        docRecord.setDocumentType(docType);
-        docRecord.setSource(source);
-        docRecord.setContentHash(contentHash);
-        docRecord.setFileSize(fileSize != null ? fileSize : 0L);
-        docRecord.setChunkCount(successSegments.size());
-        docRecord.setFeishuNodeToken(feishuNodeToken);
-        docRecord.setFeishuObjType(feishuObjType);
-        docRecord.setFeishuUpdateTime(feishuUpdateTime);
-        docRecord.setCreator(creator);
-        documentsMapper.insert(docRecord);
-
-        // 向量分片入库
-        for (int i = 0; i < successSegments.size(); i++) {
-            DocumentChunks chunk = new DocumentChunks();
-            chunk.setDocumentId(docRecord.getId());
-            chunk.setVectorId(vectorIds.get(i));
-            chunk.setChunkIndex(i);
-            chunk.setChunkText(successSegments.get(i).text());
-            documentChunksMapper.insert(chunk);
-        }
-
-        log.info("Ingested {} with {} chunks, documentId={}", fileName, successSegments.size(), docRecord.getId());
-        return new DocumentInfo(docRecord.getId(), fileName, successSegments.size());
+        return null;
     }
 
-    /**
-     * 解析 Excel
-     */
+    private String inferSection(String text) {
+        for (String line : text.split("\\R", 8)) {
+            String value = line.trim();
+            if (value.matches("^#{1,6}\\s+.+")) {
+                return value.replaceFirst("^#{1,6}\\s+", "");
+            }
+            if (value.startsWith("===") && value.endsWith("===")) {
+                return value.replace("=", "").trim();
+            }
+        }
+        return null;
+    }
+
+    private Document parseDocument(String fileName, InputStream inputStream) throws IOException {
+        String lower = fileName.toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".pdf")) {
+            return new ApachePdfBoxDocumentParser().parse(inputStream);
+        }
+        if (lower.endsWith(".txt") || lower.endsWith(".md") || lower.endsWith(".csv")
+                || lower.endsWith(".json") || lower.endsWith(".xml")) {
+            return new TextDocumentParser().parse(inputStream);
+        }
+        if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+            return parseExcel(inputStream);
+        }
+        if (lower.endsWith(".docx")) {
+            return parseWord(inputStream);
+        }
+        if (lower.endsWith(".pptx")) {
+            return parsePowerPoint(inputStream);
+        }
+        if (lower.endsWith(".html") || lower.endsWith(".htm")) {
+            return parseHtml(inputStream);
+        }
+        throw new IllegalArgumentException("Unsupported document type: " + extension(fileName));
+    }
+
     private Document parseExcel(InputStream inputStream) throws IOException {
         StringBuilder text = new StringBuilder();
-        SimpleDateFormat dateFmt = new SimpleDateFormat("yyyy-MM-dd");
-        try (XSSFWorkbook workbook = new XSSFWorkbook(inputStream)) {
-            for (int i = 0; i < workbook.getNumberOfSheets(); i++) {
-                Sheet sheet = workbook.getSheetAt(i);
-                if (sheet.getPhysicalNumberOfRows() == 0) continue;
-                text.append("=== 工作表: ").append(sheet.getSheetName()).append(" ===\n");
-
+        SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
+        try (Workbook workbook = WorkbookFactory.create(inputStream)) {
+            for (Sheet sheet : workbook) {
+                if (sheet.getPhysicalNumberOfRows() == 0) {
+                    continue;
+                }
+                text.append("=== Sheet: ").append(sheet.getSheetName()).append(" ===\n");
                 for (Row row : sheet) {
-                    for (int c = 0; c < row.getLastCellNum(); c++) {
-                        Cell cell = row.getCell(c);
+                    for (int column = 0; column < row.getLastCellNum(); column++) {
+                        Cell cell = row.getCell(column);
                         if (cell != null) {
-                            switch (cell.getCellType()) {
-                                case STRING:
-                                    text.append(cell.getStringCellValue());
-                                    break;
-                                case NUMERIC:
-                                    if (DateUtil.isCellDateFormatted(cell)) {
-                                        text.append(dateFmt.format(cell.getDateCellValue()));
-                                    } else {
-                                        double val = cell.getNumericCellValue();
-                                        if (val == Math.floor(val) && !Double.isInfinite(val)) {
-                                            text.append((long) val);
-                                        } else {
-                                            text.append(val);
-                                        }
-                                    }
-                                    break;
-                                case BOOLEAN:
-                                    text.append(cell.getBooleanCellValue());
-                                    break;
-                                case FORMULA:
-                                    try {
-                                        String formulaVal = cell.getStringCellValue();
-                                        text.append(formulaVal);
-                                    } catch (Exception e) {
-                                        text.append(cell.getCellFormula());
-                                    }
-                                    break;
-                                default:
-                                    text.append(" ");
-                            }
+                            appendCell(text, cell, dateFormat);
                         }
-                        if (c < row.getLastCellNum() - 1) {
+                        if (column < row.getLastCellNum() - 1) {
                             text.append(" | ");
                         }
                     }
-                    text.append("\n");
+                    text.append('\n');
                 }
-                text.append("\n");
+                text.append('\n');
             }
         }
-        String content = text.toString();
-        log.info("  Extracted {} chars from Excel", content.length());
-        return Document.from(content);
+        return Document.from(text.toString());
     }
 
-    /**
-     * 解析 Word
-     */
+    private void appendCell(StringBuilder text, Cell cell, SimpleDateFormat dateFormat) {
+        switch (cell.getCellType()) {
+            case STRING -> text.append(cell.getStringCellValue());
+            case NUMERIC -> {
+                if (DateUtil.isCellDateFormatted(cell)) {
+                    text.append(dateFormat.format(cell.getDateCellValue()));
+                } else {
+                    double value = cell.getNumericCellValue();
+                    text.append(value == Math.floor(value) ? (long) value : value);
+                }
+            }
+            case BOOLEAN -> text.append(cell.getBooleanCellValue());
+            case FORMULA -> text.append(cell.getCellFormula());
+            default -> text.append(' ');
+        }
+    }
+
     private Document parseWord(InputStream inputStream) throws IOException {
         StringBuilder text = new StringBuilder();
-        try (XWPFDocument doc = new XWPFDocument(inputStream)) {
-            for (org.apache.poi.xwpf.usermodel.XWPFParagraph para : doc.getParagraphs()) {
-                text.append(para.getText()).append("\n");
-            }
-            for (org.apache.poi.xwpf.usermodel.XWPFTable table : doc.getTables()) {
-                for (org.apache.poi.xwpf.usermodel.XWPFTableRow row : table.getRows()) {
-                    for (org.apache.poi.xwpf.usermodel.XWPFTableCell cell : row.getTableCells()) {
-                        text.append(cell.getText()).append(" | ");
-                    }
-                    text.append("\n");
-                }
-                text.append("\n");
-            }
+        try (XWPFDocument document = new XWPFDocument(inputStream)) {
+            document.getParagraphs().forEach(paragraph -> text.append(paragraph.getText()).append('\n'));
+            document.getTables().forEach(table -> table.getRows().forEach(row -> {
+                row.getTableCells().forEach(cell -> text.append(cell.getText()).append(" | "));
+                text.append('\n');
+            }));
         }
         return Document.from(text.toString());
     }
 
-    /**
-     * 解析 PPT
-     */
     private Document parsePowerPoint(InputStream inputStream) throws IOException {
         StringBuilder text = new StringBuilder();
-        try (XMLSlideShow ppt = new XMLSlideShow(inputStream)) {
-            int slideNum = 1;
-            for (org.apache.poi.xslf.usermodel.XSLFSlide slide : ppt.getSlides()) {
-                text.append("=== 幻灯片 ").append(slideNum++).append(" ===\n");
-                for (org.apache.poi.xslf.usermodel.XSLFShape shape : slide.getShapes()) {
-                    if (shape instanceof org.apache.poi.xslf.usermodel.XSLFTextShape) {
-                        text.append(((org.apache.poi.xslf.usermodel.XSLFTextShape) shape).getText()).append("\n");
+        try (XMLSlideShow presentation = new XMLSlideShow(inputStream)) {
+            for (int index = 0; index < presentation.getSlides().size(); index++) {
+                text.append("=== Slide ").append(index + 1).append(" ===\n");
+                presentation.getSlides().get(index).getShapes().forEach(shape -> {
+                    if (shape instanceof org.apache.poi.xslf.usermodel.XSLFTextShape textShape) {
+                        text.append(textShape.getText()).append('\n');
                     }
-                }
-                text.append("\n");
+                });
             }
         }
         return Document.from(text.toString());
     }
 
-    /**
-     * 解析 HTML
-     */
     private Document parseHtml(InputStream inputStream) throws IOException {
         org.jsoup.nodes.Document html = Jsoup.parse(inputStream, "UTF-8", "");
         html.select("script, style, nav, footer, header").remove();
         return Document.from(html.body().text());
     }
 
-    /**
-     * 获取已导入的文档列表
-     */
     public List<DocumentInfo> getIngestedDocuments() {
-        List<Documents> docs = documentsMapper.selectList(
-                Wrappers.<Documents>lambdaQuery()
-                        .select(Documents::getId, Documents::getDocumentName, Documents::getChunkCount)
-                        .orderByDesc(Documents::getCreateTime)
-        );
-        List<DocumentInfo> result = new ArrayList<>();
-        for (Documents doc : docs) {
-            result.add(new DocumentInfo(doc.getId(), doc.getDocumentName(), doc.getChunkCount()));
-        }
-        return result;
+        return getIngestedDocuments(KnowledgeSpaceService.DEFAULT_SPACE_ID);
     }
 
-    /**
-     * 分块预览（学习流程：上传后查看切分效果）
-     */
+    public List<DocumentInfo> getIngestedDocuments(long spaceId) {
+        List<DocumentInfo> rows = documentsMapper.selectReadyDocumentInfo(spaceId);
+        if (rows.isEmpty()) {
+            throw new IllegalArgumentException("Knowledge space does not exist: " + spaceId);
+        }
+        return rows.get(0).getId() == null ? List.of() : rows;
+    }
+
     public List<ChunkPreview> listChunkPreviews(Long documentId, int limit) {
-        int capped = Math.min(Math.max(limit, 1), 30);
-        List<DocumentChunks> chunks = documentChunksMapper.selectList(
-                Wrappers.<DocumentChunks>lambdaQuery()
-                        .eq(DocumentChunks::getDocumentId, documentId)
-                        .orderByAsc(DocumentChunks::getChunkIndex)
-                        .last("LIMIT " + capped)
-        );
-        List<ChunkPreview> previews = new ArrayList<>(chunks.size());
-        for (DocumentChunks chunk : chunks) {
-            String text = chunk.getChunkText() != null ? chunk.getChunkText() : "";
-            int charCount = text.length();
-            String preview = charCount > 420 ? text.substring(0, 420) + "…" : text;
-            previews.add(new ChunkPreview(
-                    chunk.getChunkIndex() != null ? chunk.getChunkIndex() : previews.size(),
-                    preview,
-                    charCount));
-        }
-        return previews;
+        return listChunkPreviews(KnowledgeSpaceService.DEFAULT_SPACE_ID, documentId, limit);
     }
 
-    /**
-     * 删除文档
-     */
-    public void deleteDocument(Long documentId) {
-        List<DocumentChunks> chunks = documentChunksMapper.selectList(
-                Wrappers.<DocumentChunks>lambdaQuery()
-                        .eq(DocumentChunks::getDocumentId, documentId)
-        );
-        List<String> vectorIds = chunks.stream()
-                .map(DocumentChunks::getVectorId)
-                .collect(Collectors.toList());
-        embeddingStore.removeAll(vectorIds);
+    public List<ChunkPreview> listChunkPreviews(long spaceId, Long documentId, int limit) {
+        return listChunkPreviews(spaceId, documentId, 0, limit);
+    }
 
-        documentChunksMapper.delete(
-                Wrappers.<DocumentChunks>lambdaQuery()
+    public List<ChunkPreview> listChunkPreviews(long spaceId, Long documentId,
+                                                int offset, int limit) {
+        int capped = Math.min(Math.max(limit, 1), 100);
+        int safeOffset = Math.max(0, offset);
+        Documents document = documentsMapper.selectOne(Wrappers.<Documents>lambdaQuery()
+                .eq(Documents::getSpaceId, spaceId)
+                .eq(Documents::getId, documentId)
+                .eq(Documents::getStatus, "READY"));
+        if (document == null) {
+            throw new IllegalArgumentException("Document does not exist in this knowledge space");
+        }
+        return chunksMapper.selectList(Wrappers.<DocumentChunks>lambdaQuery()
+                        .eq(DocumentChunks::getSpaceId, spaceId)
                         .eq(DocumentChunks::getDocumentId, documentId)
-        );
-        documentsMapper.deleteById(documentId);
-        log.info("Deleted document id={} with {} chunks", documentId, chunks.size());
+                        .eq(DocumentChunks::getDocumentVersion, document.getCurrentVersion())
+                        .eq(DocumentChunks::getStatus, "READY")
+                        .orderByAsc(DocumentChunks::getChunkIndex)
+                        .last("LIMIT " + capped + " OFFSET " + safeOffset))
+                .stream().map(chunk -> {
+                    String value = chunk.getChunkText() == null ? "" : chunk.getChunkText();
+                    String preview = value.length() > PREVIEW_MAX_CHARS
+                            ? value.substring(0, PREVIEW_MAX_CHARS) + "..." : value;
+                    return new ChunkPreview(chunk.getId(), chunk.getChunkIndex(), preview,
+                            value.length(), chunk.getSectionTitle(), chunk.getPageNumber(),
+                            chunk.getStartOffset(), chunk.getEndOffset());
+                }).toList();
+    }
+
+    public ChunkDetail getChunkDetail(long spaceId, long documentId, long chunkId) {
+        Documents document = documentsMapper.selectOne(Wrappers.<Documents>lambdaQuery()
+                .eq(Documents::getSpaceId, spaceId)
+                .eq(Documents::getId, documentId)
+                .eq(Documents::getStatus, "READY"));
+        if (document == null) {
+            throw new IllegalArgumentException("Document does not exist in this knowledge space");
+        }
+        DocumentChunks chunk = chunksMapper.selectOne(Wrappers.<DocumentChunks>lambdaQuery()
+                .eq(DocumentChunks::getId, chunkId)
+                .eq(DocumentChunks::getSpaceId, spaceId)
+                .eq(DocumentChunks::getDocumentId, documentId)
+                .eq(DocumentChunks::getDocumentVersion, document.getCurrentVersion())
+                .eq(DocumentChunks::getStatus, "READY"));
+        if (chunk == null) {
+            throw new IllegalArgumentException("Chunk does not exist in the active document version");
+        }
+        String text = chunk.getChunkText() == null ? "" : chunk.getChunkText();
+        return new ChunkDetail(chunk.getId(), chunk.getChunkIndex(), text, text.length(),
+                chunk.getSectionTitle(), chunk.getPageNumber(), chunk.getStartOffset(),
+                chunk.getEndOffset());
+    }
+
+    public void deleteDocument(Long documentId) {
+        deleteDocument(KnowledgeSpaceService.DEFAULT_SPACE_ID, documentId);
+    }
+
+    public void deleteDocument(long spaceId, Long documentId) {
+        List<String> vectorIds = persistence.beginDelete(spaceId, documentId);
+        try {
+            vectorStore.delete(vectorIds);
+            persistence.completeDelete(spaceId, documentId);
+            refreshVectorMetadata();
+        } catch (Exception error) {
+            persistence.failDelete(spaceId, documentId, vectorIds, error);
+            throw new IllegalStateException("Document vector cleanup failed and was queued for retry", error);
+        }
+    }
+
+    private static boolean isSupported(String fileName) {
+        String ext = extension(fileName);
+        return List.of("txt", "md", "csv", "json", "xml", "pdf", "xlsx", "xls",
+                "docx", "pptx", "html", "htm").contains(ext);
+    }
+
+    private static String extension(String fileName) {
+        int dot = fileName == null ? -1 : fileName.lastIndexOf('.');
+        return dot < 0 ? "text" : fileName.substring(dot + 1).toLowerCase(Locale.ROOT);
+    }
+
+    private static String sanitizeFileName(String fileName) {
+        if (fileName == null || fileName.isBlank()) {
+            throw new IllegalArgumentException("Document name is required");
+        }
+        String value = Path.of(fileName).getFileName().toString().trim();
+        if (value.isEmpty() || value.length() > 255 || value.indexOf('\0') >= 0) {
+            throw new IllegalArgumentException("Invalid document name");
+        }
+        return value;
     }
 }

@@ -9,12 +9,13 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-import javax.servlet.FilterChain;
-import javax.servlet.ServletException;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 
 /**
  * 首期应用层认证：校验 {@code X-API-Key}（或配置的头名称）。
@@ -38,7 +39,7 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
         if (path == null) {
             return false;
         }
-        if ("/api/health".equals(path)) {
+        if ("/api/health".equals(path) || "/api/readiness".equals(path)) {
             return true;
         }
         if (!path.startsWith("/api/")) {
@@ -51,7 +52,9 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
         String provided = request.getHeader(apiKeyProperties.getHeader());
-        if (apiKeyProperties.getValue().equals(provided)) {
+        if (provided != null && MessageDigest.isEqual(
+                apiKeyProperties.getValue().getBytes(StandardCharsets.UTF_8),
+                provided.getBytes(StandardCharsets.UTF_8))) {
             filterChain.doFilter(request, response);
             return;
         }

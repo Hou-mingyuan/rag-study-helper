@@ -35,6 +35,6 @@ public final class FeishuWikiSupport {
 
     /** 增量同步：远端 updateTime 与本地一致则跳过拉取内容 */
     public static boolean shouldSkipSync(Long localUpdateTime, long remoteUpdateTime) {
-        return localUpdateTime != null && localUpdateTime == remoteUpdateTime;
+        return localUpdateTime != null && localUpdateTime >= remoteUpdateTime;
     }
 }

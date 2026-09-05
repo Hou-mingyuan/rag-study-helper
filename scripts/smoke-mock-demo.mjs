@@ -1,147 +1,156 @@
 #!/usr/bin/env node
-/**
- * Mock-mode portfolio smoke: health + seeded docs + SSE chat (no API keys).
- */
-const rawBase = process.argv[2] || process.env.RAG_SMOKE_BASE_URL || 'http://localhost:8080'
-const timeoutMs = Number.parseInt(process.env.RAG_SMOKE_TIMEOUT_MS || '8000', 10)
-const maxAttempts = Number.parseInt(process.env.RAG_SMOKE_ATTEMPTS || '15', 10)
-const retryDelayMs = Number.parseInt(process.env.RAG_SMOKE_RETRY_DELAY_MS || '3000', 10)
+/** Strict zero-key Docker smoke: scan -> ingest -> retrieve -> SSE -> citation -> session. */
 
-const base = rawBase.replace(/\/+$/, '')
+const base = (process.argv[2] || process.env.RAG_SMOKE_BASE_URL || 'http://127.0.0.1:19050')
+  .replace(/\/+$/, '')
+const apiKey = process.env.RAG_API_KEY || ''
+const timeoutMs = Number.parseInt(process.env.RAG_SMOKE_TIMEOUT_MS || '15000', 10)
+const attempts = Number.parseInt(process.env.RAG_SMOKE_ATTEMPTS || '40', 10)
+const retryDelayMs = Number.parseInt(process.env.RAG_SMOKE_RETRY_DELAY_MS || '2500', 10)
+const commonHeaders = apiKey ? { 'X-API-Key': apiKey } : {}
 
+let spaceId
+let sessionId
 try {
-  await runCheck('health mock provider', async () => {
-    const body = await getJson(`${base}/api/health`)
-    assertResOk(body)
-    const provider = body.obj?.ragProvider
-    if (provider === 'openai') {
-      throw new Error('ragProvider=openai — set APP_RAG_PROVIDER=mock for zero-key demo')
-    }
-    if (provider && provider !== 'mock') {
-      throw new Error(`unexpected ragProvider: ${provider}`)
-    }
-  })
+  await waitForReadiness()
+  const health = await jsonRequest('/api/health')
+  require(health.obj?.ragProvider === 'mock', `expected Mock provider, got ${health.obj?.ragProvider}`)
+  require(['in-memory', 'chroma', 'milvus'].includes(health.obj?.vectorStore), 'unknown vector store')
+  console.log('ok - health and readiness contracts')
 
-  await runCheck('seeded documents', async () => {
-    const body = await getJson(`${base}/api/documents`)
-    assertResOk(body)
-    const docs = body.obj
-    if (!Array.isArray(docs) || docs.length === 0) {
-      const scan = await postJson(`${base}/api/documents/scan`, {})
-      assertResOk(scan)
-      if (!Array.isArray(scan.obj) || scan.obj.length === 0) {
-        throw new Error('no documents after scan — ensure data/docs/*.md is mounted or baked into image')
-      }
-    }
-  })
+  const root = await fetchWithTimeout(`${base}/`)
+  require(root.ok, `root returned HTTP ${root.status}`)
+  require(root.headers.get('content-security-policy')?.includes("frame-ancestors 'none'"),
+    'root response is missing the security CSP')
+  console.log('ok - static UI and security headers')
 
-  await runCheck('mock SSE chat with retrieval', async () => {
-    const text = await streamChat(`${base}/api/chat`, {
-      sessionId: 'mock-smoke',
-      question: 'RAG 中的向量检索是怎么工作的？',
-    })
-    if (!text.includes('Mock') && !text.includes('参考文档') && !text.includes('向量检索')) {
-      throw new Error(`unexpected chat body: ${text.slice(0, 240)}`)
-    }
-  })
+  const spaces = (await jsonRequest('/api/spaces')).obj || []
+  const defaultSpace = spaces.find(space => Number(space.id) === 1) || spaces[0]
+  require(defaultSpace, 'default knowledge space is missing')
+  spaceId = defaultSpace.id
 
-  console.log(`Mock demo smoke passed: ${base}`)
-} catch (error) {
-  console.error(`Mock demo smoke failed: ${error.message}`)
-  process.exitCode = 1
-}
-
-async function runCheck(name, fn) {
-  let lastError
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    try {
-      await fn()
-      console.log(`ok - ${name}`)
-      return
-    } catch (error) {
-      lastError = error
-      if (attempt === maxAttempts) break
-      await sleep(retryDelayMs)
-    }
+  let documents = (await jsonRequest(`/api/spaces/${spaceId}/documents`)).obj || []
+  if (documents.length === 0) {
+    const scanJobs = (await jsonRequest(`/api/spaces/${spaceId}/documents/scan`, { method: 'POST' })).obj || []
+    documents = await waitForDocuments(spaceId, scanJobs.map(job => job.id))
   }
-  throw lastError
-}
+  require(documents.length > 0, 'directory scan produced no documents')
+  console.log(`ok - directory scan and ingestion (${documents.length} documents)`)
 
-function assertResOk(body) {
-  if (body?.resCode !== '200') {
-    throw new Error(`resCode ${body?.resCode}: ${body?.msg ?? 'unknown'}`)
-  }
-}
-
-async function getJson(url) {
-  const response = await fetchWithTimeout(url)
-  return parseJson(response)
-}
-
-async function postJson(url, payload) {
-  const response = await fetchWithTimeout(url, {
+  const session = (await jsonRequest(`/api/spaces/${spaceId}/sessions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ title: 'Docker smoke' })
+  })).obj
+  sessionId = session.id
+
+  const events = await streamChat(`/api/spaces/${spaceId}/chat`, {
+    sessionId,
+    question: 'RAG 的核心流程是什么？'
   })
-  return parseJson(response)
+  const eventNames = events.map(event => event.event)
+  for (const required of ['status', 'retrieval', 'token', 'done']) {
+    require(eventNames.includes(required), `SSE response is missing ${required}: ${eventNames}`)
+  }
+  require(!eventNames.some(name => name === 'error' || name === 'cancelled'),
+    `SSE ended unexpectedly: ${eventNames}`)
+  const snippets = events.filter(event => event.event === 'retrieval')
+    .flatMap(event => event.data.snippets || [])
+  require(snippets.length > 0, 'retrieval returned no snippets')
+  require(snippets.every(item => item.documentId && item.chunkId),
+    'retrieval snippets do not contain exact document/chunk ids')
+  const answer = events.filter(event => event.event === 'token')
+    .map(event => event.data.token || '').join('')
+  require(/\[\d+:\d+]/.test(answer), `answer has no grounded citation: ${answer.slice(0, 240)}`)
+
+  const detail = (await jsonRequest(`/api/spaces/${spaceId}/sessions/${sessionId}`)).obj
+  require(detail.messages?.length >= 2, 'Redis conversation history was not persisted')
+  require(detail.messages.at(-2)?.role === 'user' && detail.messages.at(-1)?.role === 'assistant',
+    'conversation turn order is invalid')
+  console.log(`ok - SSE retrieval, ${snippets.length} exact citations and Redis session history`)
+  console.log(`Mock Docker smoke passed: ${base}`)
+} catch (error) {
+  console.error(`Mock Docker smoke failed: ${error.message}`)
+  process.exitCode = 1
+} finally {
+  if (spaceId && sessionId) {
+    await jsonRequest(`/api/spaces/${spaceId}/sessions/${sessionId}`, { method: 'DELETE' })
+      .catch(error => console.error(`Smoke cleanup failed: ${error.message}`))
+  }
 }
 
-async function streamChat(url, payload) {
-  const response = await fetchWithTimeout(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'text/event-stream',
-    },
-    body: JSON.stringify(payload),
-  })
-  if (!response.ok) {
-    const text = await response.text().catch(() => '')
-    throw new Error(`chat HTTP ${response.status}: ${text.slice(0, 200)}`)
-  }
-  const raw = await response.text()
-  let tokens = ''
-  for (const line of raw.split('\n')) {
-    const trimmed = line.trim()
-    if (!trimmed || trimmed === '[DONE]' || trimmed === 'data:[DONE]') continue
-    const data = trimmed.startsWith('data:') ? trimmed.slice(5).trim() : trimmed
-    if (data === '[DONE]') continue
+async function waitForReadiness() {
+  let lastError
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      const parsed = JSON.parse(data)
-      if (parsed.token) tokens += parsed.token
-    } catch {
-      /* ignore heartbeats */
+      const body = await jsonRequest('/api/readiness')
+      if (body.obj?.status === 'UP') return
+      lastError = new Error(`readiness=${body.obj?.status}`)
+    } catch (error) {
+      lastError = error
     }
+    if (attempt < attempts) await sleep(retryDelayMs)
   }
-  if (!tokens) {
-    throw new Error(`empty SSE chat response: ${raw.slice(0, 300)}`)
-  }
-  return tokens
+  throw new Error(`readiness did not become UP: ${lastError?.message || 'unknown error'}`)
 }
 
-async function fetchWithTimeout(url, options = {}) {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    return await fetch(url, { ...options, signal: controller.signal })
-  } catch (error) {
-    if (error.name === 'AbortError') {
-      throw new Error(`${url} timed out after ${timeoutMs}ms`)
+async function waitForDocuments(id, expectedJobIds) {
+  const deadline = Date.now() + 90_000
+  let lastJobs = []
+  while (Date.now() < deadline) {
+    lastJobs = (await jsonRequest(`/api/spaces/${id}/jobs`)).obj || []
+    const expected = lastJobs.filter(job => expectedJobIds.includes(job.id))
+    const failed = expected.find(job => job.status === 'FAILED')
+    if (failed) throw new Error(`ingestion job ${failed.id} failed: ${failed.errorMessage || 'unknown'}`)
+    if (expected.length === expectedJobIds.length
+        && expected.every(job => job.status === 'COMPLETED')) {
+      const documents = (await jsonRequest(`/api/spaces/${id}/documents`)).obj || []
+      if (documents.length > 0) return documents
     }
-    throw error
-  } finally {
-    clearTimeout(timer)
+    await sleep(250)
   }
+  throw new Error(`timed out waiting for documents; jobs=${JSON.stringify(lastJobs).slice(0, 500)}`)
 }
 
-async function parseJson(response) {
-  const text = await response.text()
+async function streamChat(path, payload) {
+  const response = await fetchWithTimeout(`${base}${path}`, {
+    method: 'POST',
+    headers: { ...commonHeaders, 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    body: JSON.stringify(payload)
+  }, 45_000)
+  const raw = await response.text()
+  require(response.ok, `chat returned HTTP ${response.status}: ${raw.slice(0, 240)}`)
+  return raw.split(/\r?\n\r?\n/).filter(Boolean).map(block => {
+    const lines = block.split(/\r?\n/)
+    const event = lines.find(line => line.startsWith('event:'))?.slice(6).trim()
+    const dataText = lines.filter(line => line.startsWith('data:')).map(line => line.slice(5)).join('\n')
+    return { event, data: dataText ? JSON.parse(dataText) : {} }
+  })
+}
+
+async function jsonRequest(path, options = {}) {
+  const response = await fetchWithTimeout(`${base}${path}`, {
+    ...options,
+    headers: { ...commonHeaders, ...(options.headers || {}) }
+  })
+  const raw = await response.text()
+  let body
   try {
-    return JSON.parse(text)
+    body = JSON.parse(raw)
   } catch {
-    throw new Error(`expected JSON from ${response.url}, got: ${text.slice(0, 200)}`)
+    throw new Error(`${path} returned non-JSON HTTP ${response.status}: ${raw.slice(0, 240)}`)
   }
+  require(response.ok && body.resCode === '200',
+    `${path} failed HTTP ${response.status}: ${body.msg || raw.slice(0, 240)}`)
+  return body
+}
+
+async function fetchWithTimeout(url, options = {}, timeout = timeoutMs) {
+  return fetch(url, { ...options, signal: AbortSignal.timeout(timeout) })
+}
+
+function require(condition, message) {
+  if (!condition) throw new Error(message)
 }
 
 function sleep(ms) {

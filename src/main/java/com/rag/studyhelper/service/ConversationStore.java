@@ -9,9 +9,21 @@ import java.util.List;
  */
 public interface ConversationStore {
 
-    List<ChatMessage> getHistory(String sessionId);
+    List<ChatMessage> getHistory(long spaceId, String sessionId);
 
-    void addTurn(String sessionId, String userMessage, String assistantMessage);
+    void addTurn(long spaceId, String sessionId, String userMessage, String assistantMessage);
 
-    void clear(String sessionId);
+    void clear(long spaceId, String sessionId);
+
+    default List<ChatMessage> getHistory(String sessionId) {
+        return getHistory(KnowledgeSpaceService.DEFAULT_SPACE_ID, sessionId);
+    }
+
+    default void addTurn(String sessionId, String userMessage, String assistantMessage) {
+        addTurn(KnowledgeSpaceService.DEFAULT_SPACE_ID, sessionId, userMessage, assistantMessage);
+    }
+
+    default void clear(String sessionId) {
+        clear(KnowledgeSpaceService.DEFAULT_SPACE_ID, sessionId);
+    }
 }

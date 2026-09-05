@@ -19,9 +19,15 @@ public class RagProviderResolver {
         if ("mock".equalsIgnoreCase(provider)) {
             this.mockMode = true;
         } else if ("openai".equalsIgnoreCase(provider)) {
+            if (!StringUtils.hasText(chatApiKey) || !StringUtils.hasText(embeddingApiKey)) {
+                throw new IllegalStateException(
+                        "OpenAI-compatible provider requires both chat and embedding API keys");
+            }
             this.mockMode = false;
-        } else {
+        } else if ("auto".equalsIgnoreCase(provider)) {
             this.mockMode = !StringUtils.hasText(chatApiKey) || !StringUtils.hasText(embeddingApiKey);
+        } else {
+            throw new IllegalArgumentException("Unsupported RAG provider: " + provider);
         }
     }
 

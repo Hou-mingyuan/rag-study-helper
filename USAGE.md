@@ -1,117 +1,161 @@
-# RAG Study Helper 使用指南
+# 使用与 API
 
-面向日常部署与问数操作的简明步骤。架构与 API 细节见 [README.md](README.md)。
+推荐先执行 `scripts/demo-mock.ps1` 或 `scripts/demo-mock.sh`，再访问 `http://127.0.0.1:19050`。以下示例均以默认 Mock/Chroma 栈为准。
 
-## 1. 准备环境
+## 页面工作流
 
-- Docker Desktop（推荐），或 JDK 8+ + 本地 MySQL 8 + Redis 7
-- **Mock 零密钥演示**（推荐作品集）：`APP_RAG_PROVIDER=mock`，Key 可留空 — 见 [docs/DEMO.md](docs/DEMO.md)
-- **真实 LLM**：Chat + Embedding 两套 API Key
+### 知识空间
 
-```bash
-cp .env.example .env
-# Mock：默认即可；真实 LLM：填入 APP_RAG_CHAT_API_KEY、APP_RAG_EMBEDDING_API_KEY
+- “＋ 新建”创建空间；名称最长 100 字，说明最长 500 字。
+- 文档、任务、会话和查询严格带 `spaceId`。
+- 删除非空空间前页面会确认；后端拒绝删除仍有文档或运行任务的空间。
+
+### 资料与分块
+
+- 上传支持 `txt/md/csv/json/xml/pdf/xls/xlsx/docx/pptx/html`，默认最大 50MB。
+- 相同 SHA256 内容重复上传会返回已有任务/文档，不重复写向量。
+- 同名但内容变化会产生新版本；旧版本在新版本完整激活前仍可查询。
+- “扫描内置目录”读取容器内 `data/docs`；每个文件成为独立可恢复任务。
+- 文档列表可检查分块，分块抽屉支持分页、完整正文和字符/页码/章节位置。
+
+### 任务与同步
+
+- 状态包括 `QUEUED/PROCESSING/COMPLETED/FAILED/CANCELLED`。
+- 页面显示阶段、进度和失败原因；排队/运行任务可取消，失败/取消任务可重试。
+- 删除文档也通过任务执行，并使用确定性向量 ID 和补偿记录保证最终一致。
+- 飞书启用后显示同步状态与运行报告；删除被保护时报告会说明原因。
+
+### 带引用问答
+
+- 每次发送绑定当前知识空间和会话。
+- SSE 依次发送 `status -> retrieval -> token* -> done`；失败和取消只有一个终态。
+- “停止生成”会中断当前请求并提供“重新生成”。
+- 引用按钮按 `documentId/chunkId` 打开原分块，而不是按文件名模糊匹配。
+- 会话列表和正文由服务端 MySQL/Redis 管理；浏览器只保存主题、视图和当前标签页 API Key。
+
+## API Key
+
+本机回环地址默认关闭认证。启用后，页面“连接与访问”可在当前标签页保存 Key；关闭标签页即清除。
+
+```dotenv
+APP_API_KEY_ENABLED=true
+APP_API_KEY=replace-with-a-long-random-value
 ```
 
-> 切勿提交含真实密钥的 `.env` 文件。
-
-## 2. 启动（Docker 推荐）
+除 `/api/health`、`/api/readiness` 和静态页面外，所有 `/api/**` 请求需携带：
 
 ```bash
-# 开发/零依赖（向量存内存，重启丢失）
-docker compose up -d
-
-# 持久化向量（二选一）
-docker compose -f docker-compose-chroma.yml up -d
-docker compose -f docker-compose-milvus.yml up -d
+curl -H "X-API-Key: replace-with-a-long-random-value" \
+  http://127.0.0.1:19050/api/spaces
 ```
 
-浏览器访问：**http://localhost:8080**
+启用认证但 Key 为空会导致应用拒绝启动。远程绑定还必须显式设置 `APP_PUBLIC_ACCESS_ENABLED=true`。
 
-查看日志：
+## API 示例
 
-```bash
-docker compose logs -f app
-```
-
-如果本机 3306、6379 或 8080 已被占用，可在 `.env` 中改宿主机端口：
+### 空间
 
 ```bash
-MYSQL_HOST_PORT=13306
-REDIS_HOST_PORT=16379
-APP_HOST_PORT=18080
-```
-
-## 3. 导入知识库
-
-| 方式 | 操作 |
-| --- | --- |
-| Web 上传 | 页面「知识库」面板拖拽或选择 PDF/Word/Excel/Markdown 等 |
-| 目录扫描 | 将文件放入 `data/docs/`，点击「扫描目录」 |
-| 飞书同步 | 在 `.env` 配置 `APP_FEISHU_APP_ID/SECRET/SPACE_ID` 并设 `APP_FEISHU_SYNC_ENABLED=true` |
-
-## 4. 开始问答
-
-1. 在聊天框输入自然语言问题（如「各产品类目的销售额占比」）
-2. 回答以 SSE 流式输出，并附带引用片段
-3. 多轮追问会自动带上会话上下文（Redis 存储，默认 TTL 过期）
-
-## 5. 常用 API（curl）
-
-```bash
-# 健康检查
-curl http://localhost:8080/api/health
-
-# 流式问答
-curl -N -X POST http://localhost:8080/api/chat \
+curl -X POST http://127.0.0.1:19050/api/spaces \
   -H "Content-Type: application/json" \
-  -d '{"sessionId":"demo-1","question":"文档里提到了哪些核心概念？"}'
+  -d '{"name":"数据库课程","description":"教材与课堂笔记"}'
 
-# 上传文档
-curl -X POST http://localhost:8080/api/documents/upload \
-  -F "file=@./sample.pdf"
-
-# 列出已入库文档
-curl http://localhost:8080/api/documents
+curl http://127.0.0.1:19050/api/spaces
 ```
 
-## 6. 本地 Maven 运行
+后续示例假定空间 ID 为 `2`。
+
+### 上传、扫描和任务
 
 ```bash
-mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS rag_study_helper;"
-mysql -u root -p rag_study_helper < init.sql
+curl -X POST http://127.0.0.1:19050/api/spaces/2/documents/upload \
+  -H "Idempotency-Key: notes-v1" \
+  -F "file=@notes.md"
 
-export APP_RAG_CHAT_API_KEY=sk-xxx
-export APP_RAG_EMBEDDING_API_KEY=sk-xxx
-export SPRING_DATASOURCE_PASSWORD=your-mysql-password
-
-mvn spring-boot:run
+curl -X POST http://127.0.0.1:19050/api/spaces/2/documents/scan
+curl http://127.0.0.1:19050/api/spaces/2/jobs
+curl -X POST http://127.0.0.1:19050/api/spaces/2/jobs/12/cancel
+curl -X POST http://127.0.0.1:19050/api/spaces/2/jobs/12/retry
 ```
 
-## 7. 切换向量库
+上传和删除返回 HTTP 202。应轮询对应任务，直到进入终态；不要把“已入队”当成“已完成”。
 
-编辑 `application.yml` 或环境变量：
-
-```yaml
-vector:
-  store:
-    type: in-memory   # chroma | milvus
-```
-
-切换 Embedding 模型后，请同步修改 `milvus.dimension`（如 OpenAI `text-embedding-3-small` 为 1536）。
-
-## 8. 常见问题
-
-| 现象 | 处理 |
-| --- | --- |
-| 启动报 LLM 未配置 | 检查 `.env` 中 `APP_RAG_CHAT_API_KEY` / `APP_RAG_EMBEDDING_API_KEY` |
-| 429 限流 | 调大 `APP_RATE_LIMIT_IP_RATE` 或等待令牌桶恢复 |
-| Milvus 连接失败 | 首次启动需 1–2 分钟，`docker compose ps` 确认 healthy |
-| 飞书同步无内容 | 确认应用已发布、权限齐全，且已加入目标知识库 |
-
-## 9. 运行测试
+### 文档和精确分块
 
 ```bash
-mvn test
-mvn package -DskipTests
+curl http://127.0.0.1:19050/api/spaces/2/documents
+curl "http://127.0.0.1:19050/api/spaces/2/documents/8/chunks?offset=0&limit=30"
+curl http://127.0.0.1:19050/api/spaces/2/documents/8/chunks/21
+
+curl -X DELETE http://127.0.0.1:19050/api/spaces/2/documents/8 \
+  -H "Idempotency-Key: delete-document-8"
 ```
+
+### 会话和 SSE 问答
+
+```bash
+curl -X POST http://127.0.0.1:19050/api/spaces/2/sessions \
+  -H "Content-Type: application/json" \
+  -d '{"title":"第一章复习"}'
+
+curl -N -X POST http://127.0.0.1:19050/api/spaces/2/chat \
+  -H "Accept: text/event-stream" \
+  -H "Content-Type: application/json" \
+  -d '{"sessionId":"SESSION_ID","question":"这份资料的核心结论是什么？"}'
+
+curl http://127.0.0.1:19050/api/spaces/2/sessions/SESSION_ID
+```
+
+`retrieval` 事件先返回候选分块和分数；答案正文中的 `[documentId:chunkId]` 必须能在这些候选中落地。
+
+### 飞书
+
+先在 `.env` 配置 `FEISHU_*` 并设置 `FEISHU_SYNC_ENABLED=true`：
+
+```bash
+curl http://127.0.0.1:19050/api/spaces/2/feishu/status
+curl -X POST http://127.0.0.1:19050/api/spaces/2/feishu/sync
+curl http://127.0.0.1:19050/api/spaces/2/feishu/runs
+```
+
+`FEISHU_LOCAL_SPACE_ID` 必须等于请求空间。同步失败、枚举不完整或删除阈值越界时，本轮不会删除本地文档。
+
+### 向量维护
+
+```bash
+curl http://127.0.0.1:19050/api/vector/status
+curl -X POST http://127.0.0.1:19050/api/vector/reconcile
+curl -X POST http://127.0.0.1:19050/api/vector/rebuild
+```
+
+重建以 MySQL 中 `READY` 分块为真源。运行期间 `/api/readiness` 可能短暂返回 503。
+
+## 状态与错误
+
+- HTTP 400：输入或状态不合法。
+- HTTP 401：API Key 缺失或错误。
+- HTTP 404：空间、文档、分块、会话或任务不存在。
+- HTTP 409：幂等/并发状态冲突。
+- HTTP 413/415：文件过大或内容类型不支持。
+- HTTP 429：共享限流命中，响应含 `Retry-After`。
+- HTTP 503：MySQL、Redis、向量或限流依赖不可用。
+
+所有响应均带 `X-Request-ID`；可在结构化日志中用同一值关联请求。
+
+## 验收工具
+
+```bash
+# 严格 Docker smoke；失败非零退出
+node scripts/smoke-mock-demo.mjs http://127.0.0.1:19050
+
+# 固定 5 文档、27 问评估
+node scripts/evaluate-mock.mjs --base-url http://127.0.0.1:19050 --out target/acceptance/evaluation.json
+
+# 固定资料读写性能门
+python loadtest/dry_run.py -n 30 -c 4 --output target/acceptance/performance.json
+
+# 真实 Chromium 页面边界
+python scripts/browser_acceptance.py
+```
+
+浏览器脚本需要 Python Playwright 1.59 和已安装的 Chromium。更多命令见 [DEPLOYMENT.md](DEPLOYMENT.md)。

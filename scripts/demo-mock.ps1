@@ -3,28 +3,44 @@ $ErrorActionPreference = "Stop"
 
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $Root
+$SharedCandidate = if ($env:RAG_SHARED_INFRA_DIR) {
+  $env:RAG_SHARED_INFRA_DIR
+} else {
+  Join-Path $Root "..\shared-infra"
+}
+$SharedInfra = [System.IO.Path]::GetFullPath($SharedCandidate)
+$SharedCompose = Join-Path $SharedInfra "docker-compose.yml"
+
+if (-not (Test-Path $SharedCompose)) {
+  throw "shared-infra not found at $SharedInfra. Set RAG_SHARED_INFRA_DIR to its directory."
+}
 
 if (-not (Test-Path ".env")) {
   Copy-Item ".env.example" ".env"
-  Write-Host "Created .env (APP_RAG_PROVIDER=mock, keys optional)."
+  Write-Host "Created .env with local Mock defaults."
 }
 
-Write-Host "Starting docker compose (mock provider, seeded data/docs)..."
-docker compose up -d --build
-
-$baseUrl = if ($env:RAG_SMOKE_BASE_URL) { $env:RAG_SMOKE_BASE_URL } else { "http://localhost:8080" }
-Write-Host "Running mock demo smoke..."
-node scripts/smoke-mock-demo.mjs $baseUrl
+Write-Host "Starting shared MySQL, Redis and Chroma..."
+docker compose --project-directory $SharedInfra -f $SharedCompose --profile study up -d --wait mysql redis chroma
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-$port = if ($env:APP_HOST_PORT) { $env:APP_HOST_PORT } else { "8080" }
+Write-Host "Starting RAG Study Helper on 19050..."
+docker compose -f docker-compose-chroma.yml up -d --build --wait --wait-timeout 360
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+$baseUrl = if ($env:RAG_SMOKE_BASE_URL) { $env:RAG_SMOKE_BASE_URL } else { "http://127.0.0.1:19050" }
+node scripts/smoke-mock-demo.mjs $baseUrl
+if ($LASTEXITCODE -ne 0) {
+  docker compose -f docker-compose-chroma.yml logs app
+  exit $LASTEXITCODE
+}
+
 Write-Host @"
 
-Mock demo is up.
-  Web UI:  http://localhost:${port}/
-  Health:  http://localhost:${port}/api/health
+RAG Study Helper is ready.
+  Web UI:    ${baseUrl}/
+  Health:    ${baseUrl}/api/health
+  Readiness: ${baseUrl}/api/readiness
 
-Try asking: 「RAG 中的向量检索是怎么工作的？」
-Upload more files via 知识库 panel to extend the demo.
-Stop: docker compose down
+Stop app: docker compose -f docker-compose-chroma.yml down
 "@

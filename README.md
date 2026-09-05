@@ -1,630 +1,189 @@
 # RAG Study Helper
 
-<p>
-  <img alt="CI" src="https://github.com/Hou-mingyuan/rag-study-helper/actions/workflows/ci.yml/badge.svg">
-  <img alt="java" src="https://img.shields.io/badge/Java-8-orange?logo=openjdk&logoColor=white">
-  <img alt="spring boot" src="https://img.shields.io/badge/Spring%20Boot-2.6-6DB33F?logo=springboot&logoColor=white">
-  <img alt="license" src="https://img.shields.io/badge/License-MIT-green">
-</p>
+RAG Study Helper 是一个本地优先、可评估、可追溯的学习资料问答工作台。当前版本为 `2.0.0-RC1`，默认使用完全离线的 Mock 模型，启动后即可完成资料导入、分块检查、检索问答和引用定位。
 
-基于 **Spring Boot 2.6 + LangChain4j 0.35** 构建的企业级 RAG（Retrieval-Augmented Generation）问答系统，支持多轮对话、多源文档知识库、语义检索重排序、飞书知识库自动同步，以及多实例水平扩展。
+## 当前能力
 
-> ⚠ **JDK 8 兼容说明：** LangChain4j 从 0.36.0 起要求 JDK 17，本项目使用最后支持 JDK 8 的 0.35.0。因此 Chroma 服务端锁定为 0.4.24（0.6.x+ API 不兼容），Milvus 使用 2.3.x。如需升级新版，需同时升级 JDK 17 + Spring Boot 3.x。
+- 知识空间：空间级文档、分块、会话、任务和飞书同步隔离。
+- 资料导入：Web 上传、容器内目录扫描；支持 `txt/md/csv/json/xml/pdf/xls/xlsx/docx/pptx/html`。
+- 可靠入库：SHA256 去重、确定性向量 ID、版本状态机、幂等键、取消、重试和失败补偿。
+- 向量后端：InMemory、Chroma 0.4.24、Milvus 2.5.27 使用同一项目契约。
+- RAG 链路：会话感知查询改写、向量召回、可选 Rerank、资料边界 Prompt、流式回答和明确拒答。
+- 精确引用：回答引用包含 `documentId/chunkId`，可定位到文件、分块、页码/章节和字符区间。
+- 飞书同步：分页、429/5xx/超时重试、更新时间增量、分布式锁、运行报告和删除保护。
+- Web 工作台：任务进度、分块预览、会话历史、流式取消/重试、离线/错误/空状态、暗黑模式和移动端布局。
+- 运维：健康/就绪、结构化日志、请求 ID、Redis 全局限流、API Key、向量对账/重建和 Flyway 迁移。
 
----
+## 技术基线
 
-## 目录
+| 层 | 版本/实现 |
+|---|---|
+| 运行时 | Java 17，Spring Boot 3.5.16 |
+| RAG | LangChain4j 1.18.0；Chroma/Milvus 适配器 1.18.0-beta28 |
+| 元数据 | MySQL 8.4，MyBatis-Plus 3.5.17，Flyway 11.20.3 |
+| 会话/协调 | Redis 7，Redisson 3.52.0 |
+| 文档 | PDFBox、Apache POI、JSoup |
+| Web | 原生 HTML/CSS/ES modules，无外部运行时 CDN |
 
-- [系统架构](#系统架构)
-- [快速开始](#快速开始)
-- [LLM 配置](#llm-配置)
-- [向量数据库](#向量数据库)
-- [文档入库](#文档入库)
-- [飞书知识库同步](#飞书知识库同步)
-- [API 参考](#api-参考)
-- [限流策略](#限流策略)
-- [项目结构](#项目结构)
-- [测试](#测试)
-- [技术栈](#技术栈)
+升级取舍和迁移约束见 [ADR-0001](docs/adr/0001-v2-runtime-and-reliability-architecture.md)。主分支不保留 Java 8/Boot 2 旁路。
 
----
+## 三分钟启动
 
-## 系统架构
+前置条件：Windows 11、Linux 或 macOS；Docker Engine 24+、Docker Compose v2、Node.js 22，以及同级目录中的 `shared-infra`。原生测试另需 JDK 17、Maven 3.9 和 Python 3.12。建议至少 4 核、8 GB 可用内存；Milvus 路径建议 12 GB。首次拉取镜像和构建可能超过三分钟。
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                     Web UI (index.html)                       │
-│     SSE 流式渲染 · Markdown 解析 · 会话管理 · 知识库面板       │
-│     深色/亮色主题 · 移动端适配 · 消息复制 · 自定义提示框       │
-│     统一 Results JSON 解析 · SSE error 事件处理                │
-└───────────────────────┬──────────────────────────────────────┘
-                        │ POST /api/chat {sessionId, question}
-                        ▼
-┌──────────────────────────────────────────────────────────────┐
-│                    RateLimitAspect (@RateLimit)               │
-│        Redisson 令牌桶（IP 30次/分 + 每日 10,000 次）         │
-│        429 → 统一 Results 格式返回                            │
-└───────────────────────┬──────────────────────────────────────┘
-                        ▼
-┌──────────────────────────────────────────────────────────────┐
-│                      ChatController                           │
-│            SseEmitter (120s timeout) · Jackson 序列化          │
-└───────────────────────┬──────────────────────────────────────┘
-                        ▼
-┌──────────────────────────────────────────────────────────────┐
-│                       RAG Pipeline                            │
-│                                                               │
-│  ┌──────────────┐   ┌───────────────┐   ┌─────────────────┐  │
-│  │  会话历史      │──▶│  Query        │──▶│  Embedding      │  │
-│  │  Redis        │   │  Rewriting    │   │  BGE-large-zh   │  │
-│  └──────────────┘   └───────────────┘   └───────┬─────────┘  │
-│                                                  ▼            │
-│                                           ┌────────────┐     │
-│                                           │ Vector      │     │
-│                                           │ Store       │     │
-│                                           │ top 20      │     │
-│                                           └─────┬──────┘     │
-│                                                  ▼            │
-│  ┌──────────────┐   ┌───────────────┐   ┌─────────────────┐  │
-│  │ LLM 回答      │◀──│ Prompt 组装    │◀──│ Rerank          │  │
-│  │ DeepSeek /    │   │ 引用 + 约束   │   │ BGE-reranker   │  │
-│  │ OpenAI 兼容   │   │              │   │ top 5          │  │
-│  └──────────────┘   └───────────────┘   └─────────────────┘  │
-│                                                               │
-│  ┌───────────────────────────────────────────────────────┐    │
-│  │ 文档来源                                               │   │
-│  │  ├─ Web 上传（Multipart 文件上传，SHA256 去重）         │   │
-│  │  ├─ 目录扫描（data/docs/ 自动扫描）                     │   │
-│  │  └─ 飞书知识库同步（Feishu Wiki Sync）                  │   │
-│  └───────────────┬───────────────────────────────────────┘    │
-│                  │ 元数据                                     │
-│                  ▼                                            │
-│  ┌──────────────────────────────────────────────────────┐    │
-│  │              MySQL + MyBatis-Plus                     │    │
-│  │  documents（文档元数据） · document_chunks（分块映射） │   │
-│  └──────────────────────────────────────────────────────┘    │
-└──────────────────────────────────────────────────────────────┘
-
-                         ┌────────────┐
-                         │   Redis    │ ← 多实例共享会话 + 分布式限流计数器
-                         └────────────┘
-```
-
----
-
-> 日常部署与操作步骤见 [USAGE.md](USAGE.md)。生产与安全见 [DEPLOYMENT.md](DEPLOYMENT.md)、[SECURITY.md](SECURITY.md)；压测见 [PERFORMANCE_REPORT.md](PERFORMANCE_REPORT.md)。
-
-## 演示与核心流程（四要素）
-
-| 要素 | 说明 |
-| --- | --- |
-| **零密钥 Mock** | `.env` 设 `APP_RAG_PROVIDER=mock`（默认），Key 可留空；内置 `data/docs/` 演示文档自动入库 |
-| **演示会话** | Web UI 自动生成 `sessionId`；推荐首问：「RAG 中的向量检索是怎么工作的？」 |
-| **启动** | `./scripts/demo-mock.ps1` 或 `docker compose up -d` → http://localhost:8080 ；Hub：**18086** |
-| **入库** | 启动扫描 `data/docs/` · Web 上传 · 飞书同步（可选） |
-| **问答** | SSE `POST /api/chat` · smoke：`node scripts/smoke-mock-demo.mjs` |
-
-完整演示路线见 **[docs/DEMO.md](docs/DEMO.md)**。
-
-**零密钥一键演示：**
+### Windows
 
 ```powershell
-.\scripts\demo-mock.ps1
+./scripts/demo-mock.ps1
 ```
+
+### Linux/macOS
 
 ```bash
 ./scripts/demo-mock.sh
 ```
 
-Project Hub 一键启动（端口 **18086**）：
+脚本执行以下严格流程：
 
-```powershell
-cd ai-portfolio/docker
-docker compose -f docker-compose.profiles.yml --profile rag-study-helper up -d --build
-node ../../rag-study-helper/scripts/smoke-mock-demo.mjs http://localhost:18086
-```
+1. 从 `.env.example` 创建未提交的 `.env`（仅当文件不存在）。
+2. 启动或复用 `shared-infra` 的 MySQL、Redis、持久化 Chroma，再构建应用；不会创建项目专属的同类容器。
+3. 等待 `/api/readiness`。
+4. 扫描内置演示资料并等待异步入库完成。
+5. 完成一次真实检索、SSE、精确引用和 Redis 会话回读。
 
-**ChatBI + RAG 联动 Mock 演示（作品集推荐）**：
+成功后打开 [http://127.0.0.1:19050](http://127.0.0.1:19050)。页面会显著显示 `MOCK 评估模式`，不会访问外部模型服务。
 
-```powershell
-cd ai-portfolio/docker
-.\demo-chatbi-rag-mock.ps1
-```
-
-## 快速开始
-
-### 前置条件
-
-- Docker（推荐）或 JDK 8+（本地运行）
-- **Mock 演示**：无需 API Key（`APP_RAG_PROVIDER=mock`，见 [docs/DEMO.md](docs/DEMO.md)）
-- **真实 LLM**：Chat + Embedding 两套 API Key
-
-> 默认使用 DeepSeek 作为对话模型、SiliconFlow 作为 Embedding/Rerank 服务商。
-> 可通过环境变量切换任意 OpenAI 兼容 API，参考 [LLM 配置](#llm-配置)。
-
-### Docker Compose（推荐）
-
-```bash
-# 1. 复制环境变量模板并填入密钥
-cp .env.example .env
-
-# 2. 选择向量库并启动
-#    InMemory（零外部依赖，重启数据丢失）
-docker compose up -d
-#    或 Chroma（持久化，中型项目）
-docker compose -f docker-compose-chroma.yml up -d
-#    或 Milvus（分布式，生产级）
-docker compose -f docker-compose-milvus.yml up -d
-
-# 3. 查看日志
-docker compose logs -f
-
-# 4. 验证健康状态并访问页面
-curl http://localhost:8080/api/health
-# 浏览器访问 http://localhost:8080
-```
-
-Docker Compose 会同时启动以下服务：
-
-| 服务 | 镜像 | 说明 |
-|------|------|------|
-| app | 本地构建（**Alpine JRE 运行时**） | Spring Boot 应用，端口 8080 |
-| mysql | mysql:8.0 | 文档元数据存储，首次启动自动建表 |
-| redis | redis:7-alpine | 多实例对话上下文共享 |
-| chroma / milvus | — | 向量数据库（按所选 compose 文件） |
-
-**Docker 镜像体积（实测 · 2026-07-06）**
-
-| 项 | 优化前 | 优化后 |
-| --- | --- | --- |
-| 运行时基座 | `eclipse-temurin:8-jre-jammy` | **`eclipse-temurin:8-jre-alpine`** |
-| 构建 | 单独 `dependency:go-offline`（耗时长） | **单次 `mvn package`** + 扩展 `.dockerignore` |
-| 应用 JAR | ~189 MB（fat jar） | ~189 MB |
-| 镜像 `docker images` | ~650 MB 量级（jammy 栈） | **~581 MB**（`rag-study-helper:slim-test`） |
-
-构建阶段仍用 Maven JDK 镜像（不进最终运行时）。镜像层缓存命中后 `docker compose up -d --build` 明显快于全量 `go-offline`。
-
-**分块预览 UX**：知识库文档列表点击条目 → 右侧 **分块预览** 面板（加载更多 / 展开 / 复制单块文本），对接 `GET /api/documents/{id}/chunks`。
-
-### 本地 Maven 运行
-
-```bash
-# 1. 确保 MySQL 和 Redis 服务已启动
-
-# 2. 创建数据库并初始化表结构
-mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS rag_study_helper;"
-mysql -u root -p rag_study_helper < init.sql
-
-# 3. 编辑 application.yml 或通过环境变量传入 API Key
-
-# 4. 运行
-mvn spring-boot:run
-
-# 5. 访问 http://localhost:8080
-```
-
-### 环境变量
-
-所有配置均可通过环境变量覆盖。复制 `.env.example` 为 `.env` 并填入密钥：
+手工启动等价命令：
 
 ```bash
 cp .env.example .env
+docker compose --project-directory ../shared-infra -f ../shared-infra/docker-compose.yml --profile study up -d --wait mysql redis chroma
+docker compose -f docker-compose-chroma.yml up -d --build --wait
+node scripts/smoke-mock-demo.mjs http://127.0.0.1:19050
 ```
 
-核心变量：
-
-| 环境变量 | 说明 | 默认值 |
-|---------|------|--------|
-| `APP_RAG_CHAT_API_KEY` | Chat 模型 API Key | — |
-| `APP_RAG_EMBEDDING_API_KEY` | Embedding 模型 API Key | — |
-| `APP_RAG_RERANK_API_KEY` | Rerank API Key（不设则复用 Embedding Key） | — |
-| `APP_RATE_LIMIT_IP_RATE` | IP 令牌桶容量及补充速率（次/分钟） | 20 |
-| `APP_RATE_LIMIT_DAILY_MAX` | 全局每日调用上限 | 10000 |
-| `MYSQL_ROOT_PASSWORD` | MySQL 密码 | root |
-| `MYSQL_HOST_PORT` | 宿主机 MySQL 端口 | 3306 |
-| `REDIS_HOST_PORT` | 宿主机 Redis 端口 | 6379 |
-| `APP_HOST_PORT` | 宿主机应用端口 | 8080 |
-| `SPRING_REDIS_HOST` | Redis 地址 | redis |
-
-> `.env` 文件已加入 `.gitignore`，不会提交到代码仓库。
-
----
-
-## LLM 配置
-
-系统支持切换任意 **OpenAI 兼容 API** 的模型，无需修改代码。
-
-### 通过环境变量切换
+停止服务但保留数据：
 
 ```bash
-# 切换 Chat 模型到 GPT-4o
-APP_RAG_CHAT_API_KEY=sk-openai-xxx
-APP_RAG_CHAT_BASE_URL=https://api.openai.com/v1
-APP_RAG_CHAT_MODEL_NAME=gpt-4o
-
-# 切换 Embedding 模型
-APP_RAG_EMBEDDING_API_KEY=sk-xxx
-APP_RAG_EMBEDDING_BASE_URL=https://api.siliconflow.cn/v1
-APP_RAG_EMBEDDING_MODEL_NAME=BAAI/bge-large-zh-v1.5
-
-# 切换 Rerank 模型
-APP_RAG_RERANK_BASE_URL=https://api.siliconflow.cn/v1
-APP_RAG_RERANK_MODEL_NAME=BAAI/bge-reranker-v2-m3
+docker compose -f docker-compose-chroma.yml down
 ```
 
-### 常用服务商
+本仓库的 `down -v` 只删除应用 inbox 卷，不会删除 shared-infra 数据。共享 MySQL、Redis 或 Chroma 的清理必须按空间、数据库和集合定向执行，不能用本项目命令删除共享卷。
 
-| 服务商 | Chat Base URL | Embedding / Rerank |
-|--------|--------------|-------------------|
-| DeepSeek | `https://api.deepseek.com` | — |
-| OpenAI | `https://api.openai.com/v1` | `text-embedding-3-small` |
-| SiliconFlow | `https://api.siliconflow.cn/v1` | `BAAI/bge-large-zh-v1.5` |
-| 阿里百炼 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `text-embedding-v2` |
-| 智谱 GLM | `https://open.bigmodel.cn/api/paas/v4` | `embedding-2` |
+## 端口
 
-> 非 OpenAI 兼容协议（如 Anthropic Claude、Google Gemini）需要额外的 LangChain4j 依赖和配置 Bean。
+本项目发布的宿主端口只绑定回环地址并限制在 `19050-19059`。共享基础设施由 `shared-infra` 统一管理，其既有宿主端口不属于本项目端口配额。
 
----
+| 端口 | 服务 |
+|---:|---|
+| 19050 | Web/API |
+| 19055 | Milvus gRPC（Milvus 方案） |
+| 19056 | Milvus 健康端点（Milvus 方案） |
+| 19057-19059 | 本地验收临时实例 |
 
-## 向量数据库
+共享服务仅绑定宿主回环地址：MySQL `13306`、Redis `16379`、Chroma `18000`。应用容器使用原生端口 `8080`，依赖容器分别保持 `3306/6379/8000`。
 
-系统支持三种向量存储方案，通过 `docker-compose` 文件切换。
+## 首次使用
 
-| 方案 | 文件 | 适用场景 |
-|------|------|---------|
-| InMemory | `docker-compose.yml` | 开发调试，零外部依赖 |
-| Chroma | `docker-compose-chroma.yml` | 中型项目，持久化存储 |
-| Milvus | `docker-compose-milvus.yml` | 大型/生产，分布式 |
+1. 在左侧新建或选择知识空间。
+2. 打开“资料与分块”，上传文件；也可点击“扫描内置目录”。
+3. 在“任务与同步”观察排队、解析、向量写入和完成状态；失败任务可重试，运行中任务可取消。
+4. 点击文档检查分页分块和完整正文。
+5. 回到“带引用问答”提问；点击引用可定位实际分块。
+6. Mock 找不到资料依据时会精确返回“根据当前知识空间的资料，没有找到可支持该问题的信息。”，不会退化为普通聊天。
 
-### Chroma
+完整交互和 API 示例见 [USAGE.md](USAGE.md)。
 
-Chroma 服务端锁定为 `0.4.24`（与 langchain4j 0.35.x 兼容，0.6.x+ API 有 breaking change）：
+## 模型模式
+
+### Mock（默认）
+
+`APP_RAG_PROVIDER=mock` 使用本地确定性 Embedding、Rerank 和流式回答，适合零密钥演示、CI 和固定评估，不代表真实大模型质量。
+
+### OpenAI 兼容服务
+
+在未提交的 `.env` 中设置：
+
+```dotenv
+APP_RAG_PROVIDER=openai
+APP_RAG_CHAT_API_KEY=...
+APP_RAG_CHAT_BASE_URL=https://api.example.com/v1
+APP_RAG_CHAT_MODEL_NAME=...
+APP_RAG_EMBEDDING_API_KEY=...
+APP_RAG_EMBEDDING_BASE_URL=https://api.example.com/v1
+APP_RAG_EMBEDDING_MODEL_NAME=...
+APP_RAG_RERANK_API_KEY=...
+APP_RAG_RERANK_BASE_URL=https://api.example.com/v1
+APP_RAG_RERANK_MODEL_NAME=...
+```
+
+Embedding 维度或模型变化后，不得直接复用旧集合。先备份，再使用界面“重建向量索引”或 `POST /api/vector/rebuild`；启动时会拒绝已知维度不一致的集合。
+
+## 数据一致性
+
+MySQL 是活跃文档版本、任务和分块状态的真源。向量写入采用确定性 ID；失败会记录补偿项并由对账任务恢复。查询只接受 MySQL 中仍为 `READY` 的分块，因此过期、已删除或跨空间向量不能成为回答依据。
+
+飞书删除必须同时满足：远端枚举完整成功、同一节点连续缺失达到阈值、删除数量和比例不越界、分布式锁持有且目标知识空间匹配。任一分页、递归、429、超时或权限错误都会禁止本轮删除。
+
+推荐 Chroma 路径可在停止应用写入后按集合导出，并同时记录行数与 SHA256：
 
 ```bash
-docker compose -f docker-compose-chroma.yml up -d
+node scripts/chroma-collection-backup.mjs backup rag_study_helper_v2 backup/ragsh/chroma-collection.json --base-url http://127.0.0.1:18000
 ```
 
-### Milvus
+完整的 MySQL、Redis、Chroma 备份和隔离恢复步骤见 [DEPLOYMENT.md](DEPLOYMENT.md)。
 
-Milvus 依赖 etcd（元数据存储）和 MinIO（数据持久化），首次启动需等待 1-2 分钟：
+## API 概览
+
+| 路径 | 用途 |
+|---|---|
+| `GET /api/health` / `GET /api/readiness` | 进程与依赖状态 |
+| `/api/spaces` | 知识空间 CRUD |
+| `/api/spaces/{id}/documents` | 列表、上传、扫描、删除、分块定位 |
+| `/api/spaces/{id}/jobs` | 入库任务列表、取消、重试 |
+| `/api/spaces/{id}/sessions` | 会话列表、详情、改名、删除 |
+| `POST /api/spaces/{id}/chat` | SSE 问答 |
+| `/api/spaces/{id}/feishu` | 飞书状态、运行报告和手工同步 |
+| `/api/vector/status|reconcile|rebuild` | 向量状态、对账和安全重建 |
+
+响应使用标准 HTTP 状态，同时保留 `{resCode,msg,obj}` 业务体。每个响应返回 `X-Request-ID`。
+
+## 验证
+
+基础单测：
 
 ```bash
-docker compose -f docker-compose-milvus.yml up -d
-# 检查 Milvus 是否就绪
-docker compose -f docker-compose-milvus.yml ps
+mvn -gs .mvn/settings-central.xml -s .mvn/settings-central.xml -B test
+node --check src/main/resources/static/app.js
+node --test src/test/js/ui-core.test.mjs
 ```
 
-> **维度配置：** `application.yml` 中 `milvus.dimension` 必须与 Embedding 模型匹配。当前使用 `BAAI/bge-large-zh-v1.5`（1024 维），如切换模型（如 OpenAI `text-embedding-3-small` 为 1536 维）需同步修改。更改维度后需重建集合（`down -v` 清数据卷或换 `collection-name`）。
-
----
-
-## 文档入库
-
-### 入库方式
-
-| 方式 | 说明 | 去重策略 |
-|------|------|---------|
-| **Web 上传** | 知识库面板拖拽或选择文件上传 | 内容 SHA256 哈希 |
-| **目录扫描** | 将文档放入 `data/docs/`，点击「扫描目录」 | 内容 SHA256 哈希 |
-| **飞书同步** | 配置飞书应用后自动同步知识库文档 | nodeToken + updateTime |
-
-### 入库流程
-
-```
-接收文档 → 去重检查（查询 documents 表）
-  ├─ 已存在 → 跳过，返回已有记录
-  └─ 不存在 → 解析 → 分块（300 字符/块，60 字符重叠）
-              → 批量 Embedding（10 条/批）
-              → 写入向量库 → 捕获 vectorId
-              → INSERT documents + INSERT document_chunks
-```
-
-### 支持的文件格式
-
-| 格式 | 解析方式 |
-|------|---------|
-| PDF | Apache PDFBox |
-| TXT / MD / CSV / JSON / XML | 文本解析 |
-| XLSX / XLS | Apache POI |
-| DOCX | Apache POI |
-| PPTX | Apache POI |
-| HTML / HTM | JSoup |
-
-### 文档更新
-
-- **上传文档重复上传**：SHA256 哈希一致则跳过
-- **飞书文档更新**：自动删除旧向量，重新入库并更新 MySQL 记录
-- **飞书文档远程删除**：定时同步时自动清理本地对应的向量和记录
-- **API 删除**：`DELETE /api/documents/{id}` 同步删除向量库和 MySQL 数据
-
----
-
-## 飞书知识库同步
-
-### 配置飞书应用
-
-在 [飞书开放平台](https://open.feishu.cn) 创建企业自建应用，添加以下权限并发布：
-
-| 权限 | 用途 | 必需 |
-|------|------|------|
-| `wiki:wiki:readonly` | 遍历知识库 | ✅ |
-| `docx:document:readonly` | 读取文档内容 | ✅ |
-| `sheets:sheet:readonly` | 读取电子表格 | 可选 |
-| `bitable:app:readonly` | 读取多维表格 | 可选 |
-
-发布后，将应用添加到知识库的成员中，赋予「阅读」权限。
-
-### 配置同步
-
-```yaml
-app:
-  feishu:
-    app-id: cli_xxx
-    app-secret: xxx
-    space-id: your-feishu-space-id
-    sync-enabled: true
-    cron: 0 0 */12 * * ?
-```
-
-或通过环境变量：
+运行中的 Mock/Chroma 栈可执行：
 
 ```bash
-APP_FEISHU_APP_ID=cli_xxx
-APP_FEISHU_APP_SECRET=xxx
-APP_FEISHU_SPACE_ID=your-feishu-space-id
-APP_FEISHU_SYNC_ENABLED=true
+node scripts/evaluate-mock.mjs --base-url http://127.0.0.1:19050 --out target/acceptance/evaluation.json
+python loadtest/dry_run.py -n 30 -c 4 --output target/acceptance/performance.json
+python scripts/browser_acceptance.py
 ```
 
-### 同步能力
+固定评估集包含 5 份资料和 27 个问题，覆盖精确术语、追问、无答案、中文长文和跨文档检索。测试矩阵与最新门槛见 [docs/DIMENSION-AUDIT.md](docs/DIMENSION-AUDIT.md)。
 
-| 飞书对象类型 | 支持 | 说明 |
-|-------------|------|------|
-| 文档（doc/docx） | ✅ | 同步为 Markdown 入库 |
-| 电子表格（sheet） | ✅ | 逐工作表读取，转为 Markdown 表格 |
-| 多维表格（bitable） | ✅ | 逐表逐记录读取字段值 |
-| 思维导图（mindnote） | ❌ | 飞书 API 无稳定导出接口 |
+## 文档
 
-### 同步策略
+- [使用与 API](USAGE.md)
+- [部署、备份和恢复](DEPLOYMENT.md)
+- [安全边界](SECURITY.md)
+- [性能基线](PERFORMANCE_REPORT.md)
+- [Mock 演示](docs/DEMO.md)
+- [架构决策](docs/adr/0001-v2-runtime-and-reliability-architecture.md)
+- [变更记录](CHANGELOG.md)
 
-**增量同步：** 通过 `feishu_update_time` 对比判断文档是否变更，仅同步有变动的文档。
+## 明确边界
 
-**文档更新：** 文档在飞书侧修改后，自动删除旧向量、清除 MySQL 中的旧分块映射，重新入库。
+- 当前产品边界是本地单用户；API Key 是最小远程访问边界，不是完整多租户身份系统。
+- InMemory 仅用于开发；推荐 Chroma。Milvus Compose 是单机持久化方案，不宣称集群高可用。
+- Mock 指标只用于可重复回归；接入真实模型后应使用同一资料集重新评估质量、成本和延迟。
 
-**反向删除：** 同步时对比飞书远程节点列表，自动清理本地已不存在的文档及其向量数据。
+## 许可证
 
----
-
-## API 参考
-
-所有接口统一返回 `Results<T>` 格式，前端通过 `resCode` 判断状态、`msg` 显示提示、`obj` 获取数据。
-
-```json
-{
-  "resCode": "200",
-  "msg": "成功",
-  "obj": { ... }
-}
-```
-
-| resCode | 含义 |
-|---------|------|
-| `200` | 成功 |
-| `400` | 参数错误 |
-| `404` | 资源不存在 |
-| `429` | 请求过于频繁（限流） |
-| `500` | 服务器内部错误 |
-
-### 接口列表
-
-| 接口 | 方法 | 请求格式 | 返回格式 | 说明 |
-|------|------|---------|---------|------|
-| `/api/health` | GET | — | `Results<Map<String,Object>>` | 运行态健康检查，返回服务状态、向量库类型、飞书同步状态 |
-| `/api/chat` | POST | `{"sessionId","question"}` | SSE `text/event-stream` | 流式问答，`event:error` 时数据为 `Results` 格式 |
-| `/api/documents/upload` | POST | `multipart/form-data` | `Results<DocumentInfo>` | 上传文档 |
-| `/api/documents` | GET | — | `Results<List<DocumentInfo>>` | 已入库文档列表 |
-| `/api/documents/scan` | POST | — | `Results<List<DocumentInfo>>` | 扫描 `data/docs/` 目录 |
-| `/api/documents/{id}` | DELETE | — | `Results<Void>` | 删除文档及其向量数据 |
-
-### SSE 流式协议
-
-`/api/chat` 使用 Server-Sent Events，数据格式：
-
-```text
-event: message
-data: {"token":"逐","token":"步","token":"输","token":"出"}
-
-event: message
-data: {"token":"完"}
-
-data: [DONE]
-```
-
-**错误事件：**
-
-```text
-event: error
-data: {"resCode":"500","msg":"流式处理失败: Redis 连接异常"}
-
-data: [DONE]
-```
-
----
-
-## 限流策略
-
-`/api/chat` 接口受分布式限流保护，防止滥用导致 LLM 调用超支。
-
-### 限流层级
-
-| 层级 | 方式 | 参数 | 目的 |
-|------|------|------|------|
-| IP 令牌桶 | Redisson `RRateLimiter`（分布式） | 容量 20，补充 20次/分 | 控制单 IP 请求速率 |
-| 全局每日计数 | Redis INCR + EXPIRE | 10,000 次/天 | 成本兜底 |
-
-### 实现方式
-
-使用 **`@RateLimit` 注解 + AOP 切面**：
-
-```java
-@RateLimit
-@PostMapping(value = "/api/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-public SseEmitter chat(@RequestBody ChatRequest request) {
-    // ...
-}
-```
-
-- 注解标记需要限流的方法
-- `RateLimitAspect` 环绕通知在方法执行前检查令牌桶和每日计数
-- 超限时返回 `resCode=429` 的 `Results` JSON，前端统一展示提示
-
-**热更新设计：** 限流参数编码进 Redis Key（如 `rl:ip:192.168.1.1:20`），
-配置变更后自动使用新 Key，旧 Key 随 24h TTL 过期，无需重启或重建即可生效。
-
-### 配置
-
-```yaml
-app:
-  rate-limit:
-    ip-rate: 20                            # IP 令牌桶容量及补充速率（次/分钟）
-    daily-max: 10000                       # 每日调用上限
-```
-
-所有参数支持环境变量覆盖（`APP_RATE_LIMIT_IP_RATE` 等）。
-
-### 无 Redis 降级
-
-当 Redis 不可用时（如测试环境），`RateLimitAspect` 自动跳过限流逻辑，
-不影响业务正常调用。
-
----
-
-## 项目结构
-
-```
-src/main/java/com/rag/studyhelper/
-├── controller/
-│   ├── ChatController.java              # SSE 流式问答接口
-│   ├── DocumentController.java          # 文档管理接口
-│   └── HealthController.java            # 运行态健康检查接口
-├── service/
-│   ├── RagQueryService.java             # RAG 核心流程编排
-│   ├── DocumentIngestionService.java    # 文档解析、去重、向量化与 MySQL 持久化
-│   ├── RedisConversationStore.java      # Redis 会话存储（多实例共享）
-│   ├── ConversationStore.java           # 会话存储接口
-│   ├── RateLimitService.java            # 分布式限流（Redisson 令牌桶 + 每日计数）
-│   ├── RerankService.java               # SiliconFlow Rerank 调用
-│   └── QueryRewriteService.java         # 多轮查询改写
-├── config/
-│   ├── LangChain4jConfig.java           # LLM / Embedding / VectorStore 配置
-│   ├── MyBatisPlusConfig.java           # MyBatis-Plus 分页插件
-│   ├── MyMetaObjectHandler.java         # 自动填充创建/更新时间
-│   ├── GlobalExceptionHandler.java      # @RestControllerAdvice 统一异常处理
-│   ├── RedissonConfig.java              # Redisson 客户端（复用 spring.redis.*）
-│   ├── RateLimit.java                   # @RateLimit 限流注解
-│   └── RateLimitAspect.java             # 限流切面（AOP 环绕通知）
-├── utils/
-│   └── Results.java                     # 统一 API 响应体（resCode / msg / obj）
-├── mapper/
-│   ├── DocumentsMapper.java             # 文档元数据 Mapper
-│   └── DocumentChunksMapper.java        # 文档分块映射 Mapper
-├── model/
-│   ├── ChatRequest.java
-│   ├── ChatMessage.java
-│   ├── DocumentInfo.java
-│   ├── Documents.java                   # documents 表实体
-│   └── DocumentChunks.java             # document_chunks 表实体
-├── feishu/
-│   ├── client/
-│   │   ├── FeishuClient.java            # 飞书 API 封装（文档/表格/多维表格）
-│   │   └── WikiNode.java                # 知识库节点模型
-│   ├── service/
-│   │   └── FeishuSyncService.java       # 同步编排 + @Scheduled 定时任务
-│   └── config/
-│       ├── FeishuProperties.java        # 配置绑定
-│       └── FeishuConfig.java            # Spring Bean 装配
-└── RagStudyHelperApplication.java
-
-src/main/resources/
-├── application.yml                      # 主配置
-└── static/index.html                    # 前端页面
-
-项目根目录/
-├── init.sql                             # MySQL DDL（首次启动自动执行）
-├── DEPLOYMENT.md                        # 部署与 Hub Profile（18086）
-├── SECURITY.md                          # 安全与生产检查清单
-├── PERFORMANCE_REPORT.md                # 压测基线与 dry_run / k6
-├── loadtest/
-│   ├── dry_run.py                       # health + documents smoke（不调 LLM）
-│   └── k6_smoke.js                      # k6 可选 smoke
-
-src/test/java/com/rag/studyhelper/
-└── utils/
-    └── ResultsTest.java                 # 统一响应体单元测试
-```
-
----
-
-## 测试
-
-```bash
-# 运行当前单元测试
-mvn test
-
-# 打包验证（跳过测试）
-mvn package -DskipTests
-```
-
-| 测试类 | 用例数 | 覆盖范围 |
-|--------|--------|---------|
-| `ResultsTest` | 2 | 统一响应体成功/失败封装 |
-
-Docker Desktop 验证建议：
-
-```bash
-docker compose up -d --build
-curl http://localhost:8080/api/health
-curl http://localhost:8080/api/documents
-python loadtest/dry_run.py --base-url http://localhost:8080
-```
-
-Hub Profile 验证见 [DEPLOYMENT.md](DEPLOYMENT.md)（`:18086`）。
-
----
-
-## 技术栈
-
-| 组件 | 技术选型 | 说明 |
-|------|---------|------|
-| 框架 | Spring Boot 2.6.13 | Java 8，稳定生产版本 |
-| AI 编排 | LangChain4j 0.35.0 | 最后支持 JDK 8 的版本系列 |
-| 对话模型 | OpenAI 兼容 API | 默认 DeepSeek，可切换 GPT / GLM 等 |
-| Embedding | BAAI/bge-large-zh-v1.5 | 中文优化，1024 维 |
-| Rerank | BAAI/bge-reranker-v2-m3 | 交叉编码器重排序 |
-| 向量存储 | InMemory / Chroma 0.4.24 / Milvus 2.3.3 | 配置切换，适应不同规模 |
-| 会话缓存 | Redis | 多实例共享，TTL 自动过期 |
-| 文档元数据 | MySQL 8.0 + MyBatis-Plus 3.5.2 | 入库去重、文档管理、分块映射 |
-| 文档解析 | Apache POI 5.1.0 + JSoup + PDFBox | Excel / Word / PPT / HTML / PDF |
-| 定时调度 | Spring @Scheduled | 飞书知识库定期同步 |
-| 构建 | Maven | Surefire 排除集成测试 |
-| 统一响应 | `Results<T>` + `GlobalExceptionHandler` | 所有同步 API 返回 `resCode/msg/obj` 格式，SSE 错误走 `event:error` 通道 |
-| 限流 | `@RateLimit` + AOP + Redisson `RRateLimiter` | 分布式令牌桶，多实例共享；注解式声明，无 Redis 时自动降级 |
-| 分布式工具 | Redisson 3.24.3 | 限流令牌桶，低配连接池避免资源竞争 |
-
----
-
-## 💬 面试 3 问 3 答
-
-**Q1：RAG 链路里为什么要「查询改写 → 向量召回 → Rerank」，而不是只调一次 Embedding？**
-A：用户原问往往口语化、缺主语或与文档表述不一致；**QueryRewrite** 先对齐检索 query。向量召回保证语义覆盖，**BGE Rerank** 用交叉编码器精排 top-k，减少噪声 chunk 进 Prompt。Mock 模式下三步仍真实执行，只是模型返回可预测响应。
-
-**Q2：Mock 零密钥模式能证明什么，不能证明什么？**
-A：能证明 **编排、入库、检索注入、SSE 流式、引用片段展示** 的工程闭环，适合作品集与 CI（`demo-mock.ps1` + `smoke-mock-demo.mjs`）。不能替代真实 Embedding/LLM 的语义质量评估；切 `APP_RAG_PROVIDER=openai` 并填 Key 即可同 UI 对比效果。
-
-**Q3：文档学习场景里，如何降低「一本正经胡说」？**
-A：(1) 检索阈值 + Rerank 控制进 Prompt 的片段质量；(2) Prompt 约束「仅依据参考文档」，SSE 回答附带 **参考文档块**；(3) 前端展示命中来源，用户可核对原文。关键业务仍建议人工复核 + 审计。与 **ChatBI Copilot** 对比：问数走 Text2SQL + 只读护栏，文档学习走 RAG 检索；Hub 一键联动见 `ai-portfolio/docker/demo-chatbi-rag-mock.ps1`。
-
----
-
-## License
-
-MIT
+本项目使用 [MIT License](LICENSE)。
