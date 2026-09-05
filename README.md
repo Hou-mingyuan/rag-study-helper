@@ -29,7 +29,7 @@ RAG Study Helper 是一个本地优先、可评估、可追溯的学习资料问
 
 ## 三分钟启动
 
-前置条件：Windows 11、Linux 或 macOS；Docker Engine 24+、Docker Compose v2、Node.js 22，以及同级目录中的 `shared-infra`。原生测试另需 JDK 17、Maven 3.9 和 Python 3.12。建议至少 4 核、8 GB 可用内存；Milvus 路径建议 12 GB。首次拉取镜像和构建可能超过三分钟。
+前置条件：Windows 11、Linux 或 macOS；Docker Engine 24+、Docker Compose v2、Node.js 22，以及同级目录中的 `shared-infra`。首次运行先执行 `pwsh scripts/setup-shared-infra.ps1`（Windows PowerShell 也可），从本仓库安装 [shared-infra 1.0.0](infra/shared-infra/README.md)，无需获取未公开的依赖仓库。原生测试另需 JDK 17、Maven 3.9 和 Python 3.12。建议至少 4 核、8 GB 可用内存；Milvus 路径建议 12 GB。首次拉取镜像和构建可能超过三分钟。
 
 ### Windows
 
