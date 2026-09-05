@@ -210,21 +210,32 @@ async def happy_path(base_url: str) -> dict[str, Any]:
         await page.get_by_role("tab", name="资料与分块").click()
         await expect(page.locator("#documentEmpty")).to_be_visible()
 
+        upload_started = asyncio.Event()
+        upload_finished = asyncio.Event()
+
         async def slow_upload(route: Route) -> None:
-            await asyncio.sleep(3)
+            upload_started.set()
             try:
-                await route.fulfill(status=202, content_type="application/json",
-                                    body='{"resCode":"200","obj":{"id":999}}')
+                await asyncio.sleep(3)
+                await route.abort("aborted")
             except PlaywrightError:
                 pass
+            finally:
+                upload_finished.set()
 
         upload_pattern = "**/api/spaces/*/documents/upload"
         await page.route(upload_pattern, slow_upload)
         await page.locator("#fileInput").set_input_files(str(UPLOAD_FIXTURE))
+        await asyncio.wait_for(upload_started.wait(), timeout=10)
         await expect(page.locator("#uploadProgress")).to_be_visible()
         await page.locator("#cancelUploadButton").click()
         await expect(page.locator("#toastRegion")).to_contain_text("上传已取消")
+        # Keep interception installed until the cancelled request is settled.
+        await asyncio.wait_for(upload_finished.wait(), timeout=10)
         await page.unroute(upload_pattern, slow_upload)
+        await page.locator("#refreshLibraryButton").click()
+        await expect(page.locator(".document-card")).to_have_count(0)
+        await expect(page.locator("#documentEmpty")).to_be_visible()
 
         jobs_started = asyncio.Event()
 
@@ -243,6 +254,7 @@ async def happy_path(base_url: str) -> dict[str, Any]:
         await delete_button.click()
         await expect(page.locator("#confirmDialog")).to_be_visible()
         await page.locator("#confirmAcceptButton").click()
+        await expect(page.locator("#confirmDialog")).not_to_be_visible()
         await expect(page.locator("#currentSpaceName")).not_to_have_text(unique_name)
         await page.unroute(jobs_pattern, slow_jobs)
 
